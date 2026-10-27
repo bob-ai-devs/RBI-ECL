@@ -56,6 +56,10 @@ COLS = ["loan_id", "borrower_id", "category", "outstanding", "undrawn_limit", "i
         "amortising", "dpd", "days_over_limit", "rating_orig", "rating_curr", "watchlist",
         "covenant_breach", "collateral_decline", "dpd_rebuttal", "credit_impaired", "years_in_stage3", "prior_stage", "restructured", "months_regular", "secured_pct", "collateral_type",
         "remaining_term_yrs", "eir_pct"]
+# The 15 columns the engine really needs. Everything else is optional and takes a safe default when absent.
+CORE_COLS = ["loan_id", "borrower_id", "category", "outstanding", "undrawn_limit", "dpd", "rating_orig", "rating_curr",
+             "credit_impaired", "watchlist", "years_in_stage3", "secured_pct", "collateral_type", "remaining_term_yrs", "eir_pct"]
+OPT_COLS = [c for c in COLS if c not in CORE_COLS]
 BOOL_COLS = ["is_revolving", "amortising", "watchlist", "covenant_breach", "collateral_decline", "dpd_rebuttal", "credit_impaired", "restructured"]
 NUM_DEFAULT = {"outstanding": 0.0, "undrawn_limit": 0.0, "dpd": 0.0, "days_over_limit": 0.0,
                "rating_orig": 5.0, "rating_curr": 5.0, "years_in_stage3": 0.0, "secured_pct": 0.0,
@@ -84,7 +88,7 @@ STAGE_COLORS = alt.Scale(domain=["Stage 1", "Stage 2", "Stage 3"], range=["#2e9e
 # ----------------------------------------------------------------------------
 # 2. DATA: generator + sanitiser
 # ----------------------------------------------------------------------------
-def generate_loans(n: int, seed: int, stress: float) -> pd.DataFrame:
+def generate_loans(n: int, seed: int, stress: float, with_optional: bool = False) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     names = CAT_NAMES
     w = np.array([CATS[k]["w"] for k in names], float)
@@ -156,6 +160,8 @@ def generate_loans(n: int, seed: int, stress: float) -> pd.DataFrame:
         "dpd_rebuttal": rebut, "credit_impaired": impaired, "years_in_stage3": yrs, "prior_stage": prior, "restructured": restr, "months_regular": months, "secured_pct": sec,
         "collateral_type": per_cat("coll"), "remaining_term_yrs": term, "eir_pct": eir,
     })
+    if not with_optional:
+        df = df[CORE_COLS]                       # optional columns are then filled with safe defaults by sanitize()
     return sanitize(df)
 
 
@@ -200,6 +206,20 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # 3. ENGINE
 # ----------------------------------------------------------------------------
+def core_template() -> str:
+    """CSV with only the 15 core columns and three sample loans."""
+    rows = [dict(loan_id="LN00001", borrower_id="B1", category="Housing loan to individuals", outstanding=45.0, undrawn_limit=0.0, dpd=0,
+                 rating_orig=3, rating_curr=3, credit_impaired=False, watchlist=False, years_in_stage3=0.0, secured_pct=100,
+                 collateral_type="Property", remaining_term_yrs=15.0, eir_pct=8.5),
+            dict(loan_id="LN00002", borrower_id="B2", category="Corporate loan", outstanding=1200.0, undrawn_limit=300.0, dpd=45,
+                 rating_orig=4, rating_curr=6, credit_impaired=False, watchlist=True, years_in_stage3=0.0, secured_pct=40,
+                 collateral_type="Receivables / Stock", remaining_term_yrs=4.0, eir_pct=9.5),
+            dict(loan_id="LN00003", borrower_id="B3", category="Unsecured retail loans", outstanding=3.0, undrawn_limit=0.0, dpd=120,
+                 rating_orig=6, rating_curr=9, credit_impaired=False, watchlist=False, years_in_stage3=0.4, secured_pct=0,
+                 collateral_type="None", remaining_term_yrs=2.0, eir_pct=14.0)]
+    return pd.DataFrame(rows)[CORE_COLS].to_csv(index=False)
+
+
 def cum_pd(grade_idx: np.ndarray, T: np.ndarray, hz: np.ndarray, floor: float) -> np.ndarray:
     """Cumulative PD over T years for a rating grade, from the lifetime curve (floor applied to each year)."""
     K = int(np.ceil(min(T.max(), 40)))
@@ -305,7 +325,7 @@ def ecl_terms(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_p
 
     marginal = np.where(stage[:, None] == 1, marg_12, marg_life)
     mask = np.where(stage[:, None] == 1, (t == 1), True)                        # Stage 1 -> 12m only, Stage 2 -> lifetime
-    ead_t = ead[:, None] * np.where(r["amortising"].to_numpy()[:, None], np.clip(1 - (t - 1) / Tc, 0, 1), 1.0)
+    ead_t = ead[:, None] * np.where((r["amortising"].to_numpy() | bool(A.get("amort_all", False)))[:, None], np.clip(1 - (t - 1) / Tc, 0, 1), 1.0)
     if A["discount"]:
         eir = r["eir_pct"].to_numpy()[:, None] / 100
         dft = (1 + eir) ** (-((t - 1) + frac / 2))
@@ -410,19 +430,31 @@ st.sidebar.title("🏦 ECL Model Lab")
 st.sidebar.caption("RBI ECL Directions 2026 · amounts in ₹ lakh")
 
 with st.sidebar.expander("🎲 Random data generator", expanded=True):
+    use_opt = st.checkbox("Use optional columns", False,
+                          help="Off = core mode: the app runs on the 15 core columns only. On = adds revolving limits, repayment profile, "
+                               "covenant / collateral flags, DPD rebuttal, last-stage history and restructuring.")
     g_n = st.slider("Number of loans", 50, 5000, 400, step=50)
     g_seed = st.number_input("Random seed", 0, 99999, 42)
     g_stress = st.slider("Portfolio stress", 0.0, 1.0, 0.3, 0.05,
                          help="Higher = more delinquency, downgrades and NPAs")
     if st.button("Generate new data", type="primary", width="stretch"):
-        st.session_state.loans = generate_loans(int(g_n), int(g_seed), float(g_stress))
+        st.session_state.loans = generate_loans(int(g_n), int(g_seed), float(g_stress), use_opt)
         st.session_state.ver += 1
         st.rerun()
     up = st.file_uploader("…or upload your own CSV", type="csv")
     if up is not None and st.button("Load uploaded CSV", width="stretch"):
-        st.session_state.loans = sanitize(pd.read_csv(up))
+        raw_up = pd.read_csv(up)
+        miss = [c for c in CORE_COLS if c not in raw_up.columns]
+        ignored = [c for c in raw_up.columns if c in OPT_COLS] if not use_opt else []
+        st.session_state.loans = sanitize(raw_up if use_opt else raw_up[[c for c in raw_up.columns if c not in OPT_COLS]])
+        st.session_state.upload_msg = (("warning", "Missing core columns filled with defaults: " + ", ".join(miss)) if miss else
+                                       ("info", "Optional columns ignored (tick 'Use optional columns' to use them): " + ", ".join(ignored)) if ignored else
+                                       ("success", "File loaded: all 15 core columns found."))
         st.session_state.ver += 1
         st.rerun()
+    if st.session_state.get("upload_msg"):
+        getattr(st, st.session_state.upload_msg[0])(st.session_state.upload_msg[1])
+    st.download_button("⬇️ CSV template (15 core columns)", core_template(), "ecl_core_template.csv", "text/csv", width="stretch")
 
 A = {}
 with st.sidebar.expander("1 · Staging rules (para 25-38, 76-81)"):
@@ -430,7 +462,7 @@ with st.sidebar.expander("1 · Staging rules (para 25-38, 76-81)"):
     A["npa_dpd"] = st.number_input("NPA when DPD >", 30, 365, 90, help="Para 8: overdue for MORE than 90 days")
     st.caption("Gate 2 · Stage 2 (any one trigger)")
     A["sicr_dpd"] = st.number_input("DPD backstop: DPD >", 0, 90, 30, help="Para 33: rebuttable 30-DPD presumption")
-    A["rev_days"] = st.number_input("Revolving: days over limit/DP ≥", 1, 89, 60, help="Para 33, revolving facilities")
+    A["rev_days"] = st.number_input("Revolving: days over limit/DP ≥", 1, 89, 60, help="Para 33, revolving facilities") if use_opt else 60
     A["use_dpd_test"] = st.checkbox("PD change vs origination (ΔPD)", True,
                                     help="Thresholds are set by the bank, documented and applied consistently (para 29-30)")
     A["pd_basis"] = st.selectbox("PD used in the ΔPD test", ["Lifetime PD", "12-month PD"],
@@ -441,14 +473,18 @@ with st.sidebar.expander("1 · Staging rules (para 25-38, 76-81)"):
     A["use_notches"] = st.checkbox("Rating downgrade (notches)", False, help="Mostly redundant once the ΔPD test is on")
     A["notches"] = st.number_input("…notches", 1, 9, 3)
     A["use_watch"] = st.checkbox("Watchlist", True)
-    A["use_qual"] = st.checkbox("Covenant breach / collateral drop", True, help="Annex 1 indicators (10) and (13)")
+    A["use_qual"] = st.checkbox("Covenant breach / collateral drop", True, help="Annex 1 indicators (10) and (13)") if use_opt else False
     A["use_cross"] = st.checkbox("Another loan of the borrower is >30 DPD", False, help="Annex 1 indicator (8)")
-    st.caption("Upgrade rules (para 77-80)")
-    A["probation_m"] = st.number_input("Bank probation before moving to a lower stage (months)", 0, 36, 0,
-                                       help="RBI text (para 77): a non-restructured Stage 3 loan may go straight to Stage 1 (or Stage 2 if SICR) once all arrears clear. 0 = follow RBI text. Above 0 is your own policy: document it.")
-    A["restr_s3_m"] = st.number_input("Restructured: months regular before Stage 3 → 2", 0, 60, 12,
-                                      help="Take from the Resolution of Stressed Assets Directions (paras 58/60). 12 is a placeholder.")
-    A["restr_s2_m"] = st.number_input("Restructured: further months before Stage 2 → 1", 0, 60, 12, help="Placeholder, as above")
+    if use_opt:
+        st.caption("Upgrade rules (para 77-80)")
+        A["probation_m"] = st.number_input("Bank probation before moving to a lower stage (months)", 0, 36, 0,
+                                           help="RBI text (para 77): a non-restructured Stage 3 loan may go straight to Stage 1 (or Stage 2 if SICR) once all arrears clear. 0 = follow RBI text. Above 0 is your own policy: document it.")
+        A["restr_s3_m"] = st.number_input("Restructured: months regular before Stage 3 → 2", 0, 60, 12,
+                                          help="Take from the Resolution of Stressed Assets Directions (paras 58/60). 12 is a placeholder.")
+        A["restr_s2_m"] = st.number_input("Restructured: further months before Stage 2 → 1", 0, 60, 12, help="Placeholder, as above")
+    else:
+        A["probation_m"], A["restr_s3_m"], A["restr_s2_m"] = 0, 12, 12
+        st.caption("Upgrade rules (para 77-80) need the optional 'last stage' columns.")
 
 with st.sidebar.expander("2 · PD, LGD, EAD (para 96-100)"):
     A["pd_floor"] = st.number_input("12m PD floor (%)", 0.0, 5.0, 0.03, 0.01, format="%.2f") / 100
@@ -457,6 +493,8 @@ with st.sidebar.expander("2 · PD, LGD, EAD (para 96-100)"):
     A["lgd_special"] = st.number_input("LGD - cash/gold/govt sec/LIC/KVP/NSC (%)", 0.0, 100.0, 30.0) / 100
     A["ccf"] = st.number_input("CCF on undrawn limits (%)", 0.0, 100.0, 40.0,
                                help="Placeholder: take the value from the Standardised Approach Directions") / 100
+    A["amort_all"] = False if use_opt else st.checkbox("Amortise EAD linearly over the remaining term", False,
+                                                       help="Core mode has no repayment-profile column. Off = flat EAD (conservative). On = balance falls evenly to zero.")
     st.caption("① 12-month PD by rating grade (%) — used for Stage 1")
     pd_tbl = st.data_editor(pd.DataFrame({"grade": range(1, 11), "pd_pct": DEFAULT_PD}),
                             hide_index=True, disabled=["grade"], key="pd_tbl", width="stretch")
@@ -501,9 +539,14 @@ tab_dash, tab_data, tab_calc, tab_exp, tab_floor, tab_rep, tab_audit, tab_guide 
 # ---- Data tab (rendered first: its output feeds everything) ------------------
 with tab_data:
     st.markdown("**Loan book** — edit cells, add rows (＋ at the bottom) or delete rows. Everything else updates.")
+    if use_opt:
+        st.caption("Core + optional columns. Optional: " + ", ".join(OPT_COLS))
+    else:
+        st.caption("Core mode: these 15 columns are all the app needs. Tick 'Use optional columns' in the sidebar to add: "
+                   + ", ".join(OPT_COLS) + ". Missing optional columns take safe defaults (see the Guide tab).")
     edited = st.data_editor(
-        st.session_state.loans, num_rows="dynamic", height=480, width="stretch",
-        key=f"editor_{st.session_state.ver}",
+        st.session_state.loans if use_opt else st.session_state.loans[CORE_COLS], num_rows="dynamic", height=480, width="stretch",
+        key=f"editor_{st.session_state.ver}_{int(use_opt)}",
         column_config={
             "category": st.column_config.SelectboxColumn("RBI product category", options=CAT_NAMES, required=True, width="large"),
             "collateral_type": st.column_config.SelectboxColumn("Collateral", options=COLL_TYPES, width="medium"),
@@ -650,6 +693,8 @@ with tab_dash:
     st.subheader("What pushes loans into Stage 2?")
     TRG = {"DPD backstop": "trg_dpd", "Revolving over limit": "trg_rev", "PD vs origination": "trg_pd", "Rating notches": "trg_notch",
            "Watchlist": "trg_watch", "Covenant / collateral": "trg_qual", "Other loan of borrower late": "trg_cross"}
+    if not use_opt:
+        TRG = {k: v for k, v in TRG.items() if v not in ("trg_rev", "trg_qual")}     # need optional columns
     s2d = R[R["stage"] == 2]
     if len(s2d):
         flg = s2d[list(TRG.values())].astype(int)
@@ -686,6 +731,8 @@ with tab_calc:
     if sel_bind != "All": v = v[v["binding"] == sel_bind]
     show = ["loan_id", "borrower_id", "category", "stage_label", "stage_reason", "prior_stage", "stage_move", "pd_orig_pct", "pd_now_pct", "pd_ratio", "outstanding", "ead", "pd12_pct", "pd_life_pct", "pd_type", "lgd",
             "ecl_adj", "floor_pct", "s3_bucket", "floor_amt", "topup", "provision", "binding"]
+    if not use_opt:
+        show = [c for c in show if c not in ("prior_stage", "stage_move")]
     st.dataframe(v[show], hide_index=True, width="stretch", height=520, column_config={
         "stage_label": "Stage", "stage_reason": "Why", "prior_stage": "Last stage", "stage_move": "Move",
         "pd_orig_pct": st.column_config.NumberColumn("PD at origination %", format="%.3f"),
@@ -830,15 +877,18 @@ with tab_rep:
                "This app always uses each loan's EIR column.")
 
     st.subheader("E. Stage migration since the last reporting date")
-    lab3 = {1: "Stage 1", 2: "Stage 2", 3: "Stage 3"}
-    mg_x = R.pivot_table(index="prior_stage", columns="stage", values="outstanding", aggfunc="sum", fill_value=0).reindex(index=[1, 2, 3], columns=[1, 2, 3], fill_value=0)
-    mg_n = R.pivot_table(index="prior_stage", columns="stage", values="loan_id", aggfunc="count", fill_value=0).reindex(index=[1, 2, 3], columns=[1, 2, 3], fill_value=0)
-    for t_ in (mg_x, mg_n):
-        t_.index = [f"From {lab3[i]}" for i in t_.index]; t_.columns = [f"To {lab3[i]}" for i in t_.columns]
-    m1_, m2_ = st.columns(2)
-    m1_.markdown("**Exposure (₹ lakh)**"); m1_.dataframe(mg_x.style.format("{:,.1f}"), width="stretch")
-    m2_.markdown("**Number of loans**"); m2_.dataframe(mg_n.style.format("{:,.0f}"), width="stretch")
-    st.caption("Needs the 'Stage at last reporting date' column. Below the diagonal = upgrades, above = downgrades.")
+    if not use_opt:
+        st.info("Needs the optional 'Stage at last reporting date' column. Tick 'Use optional columns' in the sidebar.")
+    else:
+        lab3 = {1: "Stage 1", 2: "Stage 2", 3: "Stage 3"}
+        mg_x = R.pivot_table(index="prior_stage", columns="stage", values="outstanding", aggfunc="sum", fill_value=0).reindex(index=[1, 2, 3], columns=[1, 2, 3], fill_value=0)
+        mg_n = R.pivot_table(index="prior_stage", columns="stage", values="loan_id", aggfunc="count", fill_value=0).reindex(index=[1, 2, 3], columns=[1, 2, 3], fill_value=0)
+        for t_ in (mg_x, mg_n):
+            t_.index = [f"From {lab3[i]}" for i in t_.index]; t_.columns = [f"To {lab3[i]}" for i in t_.columns]
+        m1_, m2_ = st.columns(2)
+        m1_.markdown("**Exposure (₹ lakh)**"); m1_.dataframe(mg_x.style.format("{:,.1f}"), width="stretch")
+        m2_.markdown("**Number of loans**"); m2_.dataframe(mg_n.style.format("{:,.0f}"), width="stretch")
+        st.caption("Needs the 'Stage at last reporting date' column. Below the diagonal = upgrades, above = downgrades.")
 
 # ---- Audit checks ---------------------------------------------------------------------------------
 def build_checks():
@@ -851,20 +901,23 @@ def build_checks():
     add("Data", "Every loan has a positive balance", n_zero == 0, f"{n_zero} loans with zero balance")
     n_col = int(((loans["secured_pct"] > 0) & (loans["collateral_type"] == "None")).sum())
     add("Data", "Secured % always has a collateral type", n_col == 0, f"{n_col} loans claim security but list no collateral")
-    n_und = int(((loans["undrawn_limit"] > 0) & ~loans["is_revolving"]).sum())
-    add("Data", "Undrawn limits sit on revolving facilities", n_und == 0, f"{n_und} non-revolving loans with an undrawn limit")
-    n_reb = int((loans["dpd_rebuttal"] & (loans["dpd"] > A["sicr_dpd"])).sum())
-    add("Staging", "30-DPD rebuttals are rare and documented (para 34-36)", n_reb == 0,
-        f"{n_reb} accounts >{A['sicr_dpd']} DPD kept out of Stage 2; each needs Board-approved rationale and evidence")
+    if use_opt:
+        n_und = int(((loans["undrawn_limit"] > 0) & ~loans["is_revolving"]).sum())
+        add("Data", "Undrawn limits sit on revolving facilities", n_und == 0, f"{n_und} non-revolving loans with an undrawn limit")
+    if use_opt:
+        n_reb = int((loans["dpd_rebuttal"] & (loans["dpd"] > A["sicr_dpd"])).sum())
+        add("Staging", "30-DPD rebuttals are rare and documented (para 34-36)", n_reb == 0,
+            f"{n_reb} accounts >{A['sicr_dpd']} DPD kept out of Stage 2; each needs Board-approved rationale and evidence")
     n_cont = int((R["stage_reason"] == "Borrower-level Stage 3").sum())
     add("Staging", "Borrower-level Stage 3 applied (para 76)", True, f"{n_cont} performing loans pulled into Stage 3 by another loan of the same borrower")
     add("Staging", "ΔPD test is on, with documented thresholds (para 29-30)", bool(A["use_dpd_test"]),
         f"{A['pd_basis']} · {A['pd_mode']} · β={A['beta']} · α={A['alpha_pp']} pp. RBI sets no thresholds: yours must be documented and consistent")
-    n_up = int(((R["prior_stage"] == 3) & (R["stage"] == 1)).sum())
-    add("Staging", "Straight Stage 3 → Stage 1 upgrades have evidence (para 77)", n_up == 0,
-        f"{n_up} loans: confirm all arrears are cleared and there is no SICR evidence")
-    n_held = int(R["stage_reason"].str.contains("Restructured:|Bank probation", regex=True).sum())
-    add("Staging", "Cure / probation holds applied", True, f"{n_held} loans held in a worse stage by restructuring or probation rules")
+    if use_opt:
+        n_up = int(((R["prior_stage"] == 3) & (R["stage"] == 1)).sum())
+        add("Staging", "Straight Stage 3 → Stage 1 upgrades have evidence (para 77)", n_up == 0,
+            f"{n_up} loans: confirm all arrears are cleared and there is no SICR evidence")
+        n_held = int(R["stage_reason"].str.contains("Restructured:|Bank probation", regex=True).sum())
+        add("Staging", "Cure / probation holds applied", True, f"{n_held} loans held in a worse stage by restructuring or probation rules")
     s2 = R.loc[R["stage"] == 2, "outstanding"].sum() / max(tot_out, 1e-9) * 100
     add("Staging", "Stage 2 share is plausible (< 35%)", s2 < 35, f"{s2:.1f}% of exposure")
     w = float(scen["weight_pct"].sum())
@@ -921,6 +974,21 @@ with tab_guide:
 4. **ECL** = Σ over years of `marginal PD × LGD × EAD × discount factor`, run in each scenario, then probability-weighted (para 47-49).
 5. **Income** – Stage 1/2 interest accrues at EIR × gross carrying amount; Stage 3 interest is *not* accrued and is booked on a cash basis only (para 113-116).
 6. **Floors** – `provision = max(model ECL, RBI floor)`: Stage 1/2 per category-stage bucket, Stage 3 per account (para 82, 90).
+
+### Core and optional columns
+**Core (15), needed for every run:** `loan_id`, `borrower_id` (Stage 3 is per borrower) · `category` (which floor applies) ·
+`outstanding`, `undrawn_limit` (EAD) · `dpd` (Stage 3 and 2) · `rating_orig`, `rating_curr` (PD and the PD-change test) ·
+`credit_impaired` (UTP / distress / concession flag, Stage 3) · `watchlist` (Stage 2) · `secured_pct`, `collateral_type` (LGD) ·
+`remaining_term_yrs`, `eir_pct` (lifetime PD, discounting) · `years_in_stage3` (Stage 3 floor).
+The app uses rating *grades*; the PD for each grade comes from the two PD tables in the sidebar.
+
+| Optional column | If absent, the app assumes | Switches on |
+|---|---|---|
+| `is_revolving`, `days_over_limit` | not revolving, 0 days | revolving over-limit rules and out-of-order NPA |
+| `amortising` | flat EAD (or tick the sidebar switch for linear) | repayment profile |
+| `covenant_breach`, `collateral_decline` | False | Annex 1 qualitative triggers |
+| `dpd_rebuttal` | False | documented rebuttal of the 30-DPD presumption |
+| `prior_stage`, `months_regular`, `restructured` | stage 1, 24 months, not restructured | upgrade / probation rules, stage migration table |
 
 ### Simplifications you should know about
 - **Both PDs** are lookup tables. The lifetime curve is derived from the 12-month PD unless you edit it; a real build needs default history, TTC→PIT calibration and macro links. Beyond year 10 the curve repeats its year-10 conditional PD.
