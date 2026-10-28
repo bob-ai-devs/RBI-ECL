@@ -561,6 +561,516 @@ def fmt_amt(x: float) -> str:
 
 
 # ----------------------------------------------------------------------------
+# 3b. ANALYSIS HELPERS + TAB RENDERERS
+# ----------------------------------------------------------------------------
+def borrower_table(Rv: pd.DataFrame) -> pd.DataFrame:
+    """One row per customer (borrower): exposure, provision, worst stage and key risk facts."""
+    b = Rv.groupby("borrower_id").agg(
+        category=("category", "first"), loans=("loan_id", "count"), exposure=("outstanding", "sum"), ead=("ead", "sum"),
+        model_ecl=("ecl_adj", "sum"), topup=("topup", "sum"), provision=("provision", "sum"), worst_stage=("stage", "max"),
+        max_dpd=("dpd", "max"), grade_now=("rating_curr", "max"), grade_orig=("rating_orig", "max"), watchlist=("watchlist", "max"),
+        utp=("credit_impaired", "max"), years_s3=("years_in_stage3", "max"), accrued=("interest_accrued", "sum"),
+        suspended=("interest_suspended", "sum")).reset_index()
+    b["coverage_%"] = np.where(b["exposure"] > 0, b["provision"] / b["exposure"] * 100, 0.0)
+    b["stage_label"] = "Stage " + b["worst_stage"].astype(str)
+    return b
+
+
+def explain_borrower(rows: pd.DataFrame) -> list:
+    """Plain-language reasons for a customer's stage."""
+    out = []
+    if (rows["stage"] == 3).any():
+        direct = rows[rows["stage_reason"].str.startswith(("NPA", "UTP"))]
+        if len(direct):
+            out.append(f"**Gate 1, Stage 3:** {', '.join(direct['loan_id'].head(3))} {'is' if len(direct) == 1 else 'are'} non-performing / impaired "
+                       f"({direct['stage_reason'].iloc[0]}).")
+        others = rows[rows["stage_reason"] == "Borrower-level Stage 3"]
+        if len(others):
+            out.append(f"**Para 76:** {len(others)} other loan(s) of this customer are pulled into Stage 3 because Stage 3 is decided per borrower.")
+        held = rows[rows["stage_reason"].str.contains("Restructured:|Bank probation", regex=True)]
+        if len(held):
+            out.append(f"**Cure rule:** {held['stage_reason'].iloc[0]}.")
+    else:
+        s2 = rows[rows["stage"] == 2]
+        for r in s2.head(5).itertuples():
+            out.append(f"**Gate 2, Stage 2:** {r.loan_id}: {r.stage_reason}. PD {r.pd_now_pct:.2f}% now vs {r.pd_orig_pct:.2f}% at origination "
+                       f"(×{r.pd_ratio:.1f}); DPD {r.dpd}.")
+        if s2.empty:
+            out.append(f"**Stage 1:** no trigger fired. Max DPD {int(rows['dpd'].max())}, highest PD ratio ×{rows['pd_ratio'].max():.1f}, "
+                       f"no watchlist or UTP flag.")
+    return out
+
+
+def monitoring_text(stage: int) -> str:
+    if stage == 3:
+        return "Stage 3: DPD tracked daily; review at least monthly; provision at every reporting date (quarterly at minimum)."
+    if stage == 2:
+        return "Stage 2: review monthly (watch for cure or a slide to Stage 3); provision at every reporting date."
+    return "Stage 1: DPD tracked daily in the day-end process; staging and ECL at every reporting date (quarterly at minimum). Monthly runs are good practice, not an RBI rule."
+
+
+def ecl_if_stage(r: pd.DataFrame, stage_val: int, A: dict, scen: pd.DataFrame, grade_pd: np.ndarray, hz: np.ndarray) -> pd.Series:
+    """Probability-weighted model ECL if these loans were in the given stage (1, 2 or 3)."""
+    if r.empty:
+        return pd.Series(dtype=float)
+    x = r.copy()
+    x["stage"] = stage_val
+    x["ead"] = x["outstanding"] if stage_val == 3 else x["outstanding"] + A["ccf"] * x["undrawn_limit"]
+    w = scen["weight_pct"].to_numpy(float)
+    w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    e = sum(wi * scenario_ecl(x, A, float(pm), float(lm), grade_pd, hz) for wi, pm, lm in zip(w, scen["pd_mult"], scen["lgd_mult"]))
+    return pd.Series(e * (1 + A["overlay"] / 100), index=r.index)
+
+
+def render_dashboard(Rv: pd.DataFrame, FSv: pd.DataFrame, top_n: int):
+    v_out = Rv["outstanding"].sum(); v_model = Rv["ecl_adj"].sum(); v_prov = Rv["provision"].sum(); v_top = Rv["topup"].sum()
+    B = borrower_table(Rv)
+    top_share = B.nlargest(10, "provision")["provision"].sum() / max(v_prov, 1e-9) * 100
+    stx = Rv.groupby("stage").agg(out=("outstanding", "sum"), prov=("provision", "sum")).reindex([1, 2, 3], fill_value=0)
+    share = lambda i: stx.loc[i, "out"] / max(v_out, 1e-9) * 100
+    t_ov, t_co, t_st, t_fl = st.tabs(["Overview", "Concentration", "Staging & PD", "Floors & scenarios"])
+
+    # ------------------------------------------------------------------ Overview
+    with t_ov:
+        k = st.columns(6)
+        k[0].metric("Gross exposure", fmt_amt(v_out))
+        k[1].metric("Model ECL", fmt_amt(v_model))
+        k[2].metric("Final provision", fmt_amt(v_prov), f"+{fmt_amt(v_top)} from floors" if v_top > 0 else "no floor top-up", delta_color="off")
+        k[3].metric("Coverage ratio", f"{v_prov / v_out * 100:.2f}%" if v_out else "–")
+        k[4].metric("Stage 2 share", f"{share(2):.1f}%")
+        k[5].metric("Stage 3 share", f"{share(3):.1f}%")
+        acc = Rv["interest_accrued"].sum()
+        k2 = st.columns(4)
+        k2[0].metric("Interest accrued p.a. (Stage 1+2)", fmt_amt(acc), help="Para 113: EIR × gross carrying amount")
+        k2[1].metric("Interest NOT accrued (Stage 3)", fmt_amt(Rv["interest_suspended"].sum()), help="Para 115: cash basis only")
+        k2[2].metric("Provision ÷ accrued interest", f"{v_prov / acc * 100:.0f}%" if acc else "–")
+        k2[3].metric("Top-10 customers' share of provision", f"{top_share:.0f}%", help=f"{len(B):,} customers in this view")
+
+        cat_tot = Rv.groupby("category")["provision"].sum().sort_values(ascending=False)
+        bullets = [
+            f"Coverage is **{v_prov / v_out * 100:.2f}%**. Stage 2 holds **{share(2):.1f}%** of exposure and Stage 3 **{share(3):.1f}%**, "
+            f"yet Stage 3 carries **{stx.loc[3, 'prov'] / max(v_prov, 1e-9) * 100:.0f}%** of the provision.",
+            f"**{cat_tot.index[0]}** is the largest provision ({cat_tot.iloc[0] / max(v_prov, 1e-9) * 100:.0f}% of the total).",
+            (f"RBI floors add **{fmt_amt(v_top)}** ({v_top / max(v_prov, 1e-9) * 100:.1f}% of the provision), so the model is below the regulator's minimum somewhere."
+             if v_top > 1e-9 else "The model is above the RBI floor everywhere: floors do not bind."),
+            f"The top 10 customers account for **{top_share:.0f}%** of the provision. See the Customer explorer tab to drill in.",
+        ]
+        with st.container(border=True):
+            st.markdown("**Reading this portfolio**")
+            for b_ in bullets:
+                st.markdown("- " + b_)
+
+        by_stage = Rv.groupby("stage_label").agg(loans=("loan_id", "count"), exposure=("outstanding", "sum"),
+                                                 provision=("provision", "sum")).reset_index()
+        by_stage["coverage_%"] = by_stage["provision"] / by_stage["exposure"].where(by_stage["exposure"] > 0, 1) * 100
+        a, b = st.columns(2)
+        with a:
+            st.subheader("Exposure by stage")
+            st.altair_chart(alt.Chart(by_stage).mark_arc(innerRadius=70).encode(
+                theta="exposure:Q", color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+                tooltip=["stage_label", "loans", alt.Tooltip("exposure:Q", format=",.0f")]).properties(height=280), width="stretch")
+        with b:
+            st.subheader("Provision and coverage by stage")
+            bars = alt.Chart(by_stage).mark_bar().encode(
+                x=alt.X("stage_label:N", title=None), y=alt.Y("provision:Q", title="Provision (₹ L)"),
+                color=alt.Color("stage_label:N", scale=STAGE_COLORS, legend=None),
+                tooltip=["stage_label", alt.Tooltip("provision:Q", format=",.0f"), alt.Tooltip("coverage_%:Q", format=".2f")])
+            txt = bars.mark_text(dy=-8).encode(text=alt.Text("coverage_%:Q", format=".2f"))
+            st.altair_chart((bars + txt).properties(height=280), width="stretch")
+            st.caption("Number above each bar = coverage % (provision ÷ exposure)")
+
+        st.subheader("From model ECL to final provision")
+        m_by = Rv.groupby("stage")["ecl_model"].sum().reindex([1, 2, 3], fill_value=0)
+        steps = [("Stage 1 ECL", m_by[1]), ("Stage 2 ECL", m_by[2]), ("Stage 3 ECL", m_by[3]),
+                 ("Overlay", float((Rv["ecl_adj"] - Rv["ecl_model"]).sum())), ("Floor top-up", float(v_top))]
+        wrows, cum = [], 0.0
+        for nm, val in steps:
+            wrows.append({"step": nm, "start": cum, "end": cum + val, "amount": val}); cum += val
+        wrows.append({"step": "Final provision", "start": 0.0, "end": cum, "amount": cum})
+        wf = pd.DataFrame(wrows)
+        base_ = alt.Chart(wf).encode(x=alt.X("step:N", sort=None, title=None, axis=alt.Axis(labelAngle=0)))
+        wbars = base_.mark_bar().encode(
+            y=alt.Y("start:Q", title="₹ lakh"), y2="end:Q",
+            color=alt.Color("step:N", legend=None, scale=alt.Scale(domain=list(wf["step"]),
+                            range=["#2e9e6b", "#f0a500", "#d64545", "#8aa4c8", "#e8793a", "#14213d"])),
+            tooltip=["step", alt.Tooltip("amount:Q", format=",.1f")])
+        wtxt = base_.mark_text(dy=-6).encode(y="end:Q", text=alt.Text("amount:Q", format=",.0f"))
+        st.altair_chart((wbars + wtxt).properties(height=300), width="stretch")
+
+    # ------------------------------------------------------------------ Concentration
+    with t_co:
+        c, d_ = st.columns(2)
+        with c:
+            st.subheader("Provision by product category")
+            st.altair_chart(alt.Chart(FSv).mark_bar().encode(
+                y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
+                x=alt.X("sum(provision):Q", title="Provision (₹ L)"),
+                color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+                tooltip=["category", "stage_label", alt.Tooltip("provision:Q", format=",.0f")]).properties(height=400), width="stretch")
+        with d_:
+            st.subheader("Coverage ratio by category")
+            cc = Rv.groupby("category").agg(p=("provision", "sum"), o=("outstanding", "sum")).reset_index()
+            cc["coverage_%"] = cc["p"] / cc["o"].where(cc["o"] > 0, 1) * 100
+            st.altair_chart(alt.Chart(cc).mark_bar(color="#3a6ea5").encode(
+                y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
+                x=alt.X("coverage_%:Q", title="Provision ÷ exposure (%)"),
+                tooltip=["category", alt.Tooltip("coverage_%:Q", format=".2f")]).properties(height=400), width="stretch")
+        e, f = st.columns(2)
+        with e:
+            st.subheader("Coverage heatmap: category × stage")
+            hm = FSv[["category", "stage_label", "provision", "exposure"]].copy()
+            hm["coverage"] = hm["provision"] / hm["exposure"].where(hm["exposure"] > 0, 1) * 100
+            ax = dict(x=alt.X("stage_label:N", title=None), y=alt.Y("category:N", title=None, axis=alt.Axis(labelLimit=240)))
+            rect = alt.Chart(hm).mark_rect().encode(**ax, color=alt.Color("coverage:Q", scale=alt.Scale(scheme="orangered"), title="Coverage %"),
+                                                    tooltip=["category", "stage_label", alt.Tooltip("coverage:Q", format=".2f"),
+                                                             alt.Tooltip("provision:Q", format=",.0f")])
+            txt = alt.Chart(hm).mark_text(fontSize=10).encode(**ax, text=alt.Text("coverage:Q", format=".1f"),
+                                                              color=alt.condition(alt.datum.coverage > 40, alt.value("white"), alt.value("#14213d")))
+            st.altair_chart((rect + txt).properties(height=400), width="stretch")
+        with f:
+            st.subheader(f"Top {top_n} customers by provision")
+            bt = B.nlargest(top_n, "provision")
+            st.altair_chart(alt.Chart(bt).mark_bar().encode(
+                y=alt.Y("borrower_id:N", sort="-x", title=None), x=alt.X("provision:Q", title="Provision (₹ L)"),
+                color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+                tooltip=["borrower_id", "category", "loans", alt.Tooltip("exposure:Q", format=",.0f"),
+                         alt.Tooltip("provision:Q", format=",.1f"), alt.Tooltip("coverage_%:Q", format=".2f")]).properties(height=400), width="stretch")
+            st.caption("Open one of these in the Customer explorer tab.")
+
+    # ------------------------------------------------------------------ Staging & PD
+    with t_st:
+        g, h = st.columns(2)
+        with g:
+            st.subheader("What pushes loans into Stage 2?")
+            TRG = {"DPD backstop": "trg_dpd", "Revolving over limit": "trg_rev", "PD vs origination": "trg_pd", "Rating notches": "trg_notch",
+                   "Watchlist": "trg_watch", "Covenant / collateral": "trg_qual", "Other loan of borrower late": "trg_cross"}
+            if not use_opt:
+                TRG = {k_: v_ for k_, v_ in TRG.items() if v_ not in ("trg_rev", "trg_qual")}
+            s2d = Rv[Rv["stage"] == 2]
+            if len(s2d):
+                flg = s2d[list(TRG.values())].astype(int)
+                nfl = flg.sum(axis=1)
+                trows = []
+                for lab_, col_ in TRG.items():
+                    trows.append({"trigger": lab_, "measure": "Loans it flags", "loans": int(flg[col_].sum())})
+                    trows.append({"trigger": lab_, "measure": "Loans it is the ONLY trigger for", "loans": int(((flg[col_] == 1) & (nfl == 1)).sum())})
+                st.altair_chart(alt.Chart(pd.DataFrame(trows)).mark_bar().encode(
+                    y=alt.Y("trigger:N", sort=None, title=None), x=alt.X("loans:Q", title="Stage 2 loans"), yOffset="measure:N",
+                    color=alt.Color("measure:N", scale=alt.Scale(range=["#8aa4c8", "#e8793a"]), title=None),
+                    tooltip=["trigger", "measure", "loans"]).properties(height=320), width="stretch")
+                st.caption("A trigger whose 'only trigger' bar is near zero adds little on its own: a candidate to drop for a leaner model.")
+            else:
+                st.info("No Stage 2 loans in this view.")
+        with h:
+            st.subheader("Exposure by DPD bucket and stage")
+            dd = Rv.groupby(["dpd_bucket", "stage_label"])["outstanding"].sum().reset_index()
+            st.altair_chart(alt.Chart(dd).mark_bar().encode(
+                x=alt.X("dpd_bucket:N", sort=["Current", "1-30", "31-60", "61-90", ">90"], title="Days past due"),
+                y=alt.Y("outstanding:Q", title="Exposure (₹ L)"),
+                color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+                tooltip=["dpd_bucket", "stage_label", alt.Tooltip("outstanding:Q", format=",.0f")]).properties(height=320), width="stretch")
+        i, j = st.columns(2)
+        with i:
+            st.subheader(f"PD now vs PD at origination ({A['pd_basis']})")
+            sc = Rv[["loan_id", "pd_orig_pct", "pd_now_pct", "stage_label"]].copy()
+            if len(sc) > 3000:
+                sc = sc.sample(3000, random_state=1)
+            lo_, hi_ = float(sc["pd_orig_pct"].min()), float(sc["pd_orig_pct"].max())
+            ref = pd.DataFrame({"x": [lo_, hi_, lo_, hi_], "y": [lo_, hi_, lo_ * A["beta"], hi_ * A["beta"]],
+                                "line": ["no change"] * 2 + [f"β = {A['beta']}×"] * 2})
+            pts = alt.Chart(sc).mark_circle(size=40, opacity=0.45).encode(
+                x=alt.X("pd_orig_pct:Q", scale=alt.Scale(type="log"), title="PD at origination (%)"),
+                y=alt.Y("pd_now_pct:Q", scale=alt.Scale(type="log"), title="PD now (%)"),
+                color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+                tooltip=["loan_id", alt.Tooltip("pd_orig_pct:Q", format=".3f"), alt.Tooltip("pd_now_pct:Q", format=".3f"), "stage_label"])
+            lines = alt.Chart(ref).mark_line(color="#14213d").encode(
+                x=alt.X("x:Q", scale=alt.Scale(type="log")), y=alt.Y("y:Q", scale=alt.Scale(type="log")), detail="line:N",
+                strokeDash=alt.StrokeDash("line:N", scale=alt.Scale(domain=["no change", f"β = {A['beta']}×"], range=[[1, 0], [6, 4]]),
+                                          legend=alt.Legend(title="Reference")))
+            st.altair_chart((pts + lines).properties(height=340), width="stretch")
+            st.caption("Dots above the β line have moved at least β times riskier since origination. Sampled to 3,000 points.")
+        with j:
+            st.subheader("Two PDs: cumulative default curve by grade")
+            cv = ts_used.melt("grade", var_name="year", value_name="cum_pd")
+            cv["year"] = cv["year"].str[1:].astype(int); cv["grade"] = cv["grade"].astype(str)
+            st.altair_chart(alt.Chart(cv).mark_line(point=True).encode(
+                x=alt.X("year:O", title="Years from today"), y=alt.Y("cum_pd:Q", title="Cumulative PD (%)"),
+                color=alt.Color("grade:N", title="Rating grade", sort=[str(q) for q in range(1, 11)]),
+                tooltip=["grade", "year", alt.Tooltip("cum_pd:Q", format=".2f")]).properties(height=340), width="stretch")
+            st.caption("Year 1 = the 12-month PD (Stage 1). The whole line = the lifetime PD (Stage 2).")
+        st.subheader("Average PD by stage: 12-month vs lifetime")
+        wsum = Rv.groupby("stage_label")["ead"].sum()
+        pdl = pd.DataFrame({"12-month PD": (Rv["pd12_pct"] * Rv["ead"]).groupby(Rv["stage_label"]).sum() / wsum,
+                            "Lifetime PD": (Rv["pd_life_pct"] * Rv["ead"]).groupby(Rv["stage_label"]).sum() / wsum}).reset_index()
+        pdl = pdl.melt("stage_label", var_name="type", value_name="pd")
+        st.altair_chart(alt.Chart(pdl).mark_bar().encode(
+            x=alt.X("stage_label:N", title=None), xOffset="type:N", y=alt.Y("pd:Q", title="EAD-weighted PD (%)"),
+            color=alt.Color("type:N", scale=alt.Scale(range=["#2e9e6b", "#f5a524"]), title=None),
+            tooltip=["stage_label", "type", alt.Tooltip("pd:Q", format=".2f")]).properties(height=260), width="stretch")
+
+    # ------------------------------------------------------------------ Floors & scenarios
+    with t_fl:
+        l, m_ = st.columns(2)
+        with l:
+            st.subheader("Model ECL vs final provision (after floors)")
+            cat_cmp = Rv.groupby("category").agg(model_ecl=("ecl_adj", "sum"), provision=("provision", "sum")).reset_index()
+            cat_long = cat_cmp.melt("category", var_name="measure", value_name="amount")
+            cat_long["measure"] = cat_long["measure"].map({"model_ecl": "Model ECL", "provision": "Final (with floors)"})
+            st.altair_chart(alt.Chart(cat_long).mark_bar().encode(
+                y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
+                x=alt.X("amount:Q", title="₹ lakh"), yOffset="measure:N",
+                color=alt.Color("measure:N", scale=alt.Scale(range=["#8aa4c8", "#e8793a"]), title=None),
+                tooltip=["category", "measure", alt.Tooltip("amount:Q", format=",.0f")]).properties(height=420), width="stretch")
+        with m_:
+            st.subheader("Scenario view (total ECL before floors)")
+            names = scen["scenario"].tolist()
+            scd = pd.DataFrame({"scenario": names + ["Weighted"],
+                                "ecl": [Rv[f"ecl_{n_}"].sum() * (1 + A["overlay"] / 100) for n_ in names] + [v_model]})
+            st.altair_chart(alt.Chart(scd).mark_bar().encode(
+                x=alt.X("scenario:N", sort=None, title=None), y=alt.Y("ecl:Q", title="ECL (₹ L)"),
+                color=alt.condition(alt.datum.scenario == "Weighted", alt.value("#e8793a"), alt.value("#8aa4c8")),
+                tooltip=["scenario", alt.Tooltip("ecl:Q", format=",.0f")]).properties(height=420), width="stretch")
+        binding = FSv[FSv["topup"] > 1e-9].sort_values("topup", ascending=False)
+        if len(binding):
+            top = binding.iloc[0]
+            st.info(f"🧱 **Prudential floors bind in {len(binding)} category-stage buckets** and add {fmt_amt(v_top)} "
+                    f"({v_top / max(v_prov, 1e-9) * 100:.1f}% of the final provision). Largest top-up: **{top['category']} – {top['stage_label']}** "
+                    f"({fmt_amt(top['topup'])}). Your model numbers are below RBI's backstop there: expect questions.")
+        else:
+            st.success("Model ECL is above the RBI prudential floor in every bucket.")
+
+
+def render_customer():
+    B = borrower_table(R)
+    st.markdown("**Customer-wise view.** One borrower in one place: its loans, why it sits in its stage, how its provision is built, "
+                "and a what-if. Stage 3 is decided per customer, so this is where contagion becomes visible.")
+    c1, c2 = st.columns([1, 3])
+    mode = c1.radio("Show", ["All", "Stage 3", "Stage 2", "Stage 1", "Top 50 by provision"], key="cust_mode")
+    Bv = B[B["stage_label"] == mode] if mode in ("Stage 1", "Stage 2", "Stage 3") else (B.nlargest(50, "provision") if mode.startswith("Top") else B)
+    Bv = Bv.sort_values("provision", ascending=False)
+    if Bv.empty:
+        c2.info("No customers in this view."); return
+    labels = {r.borrower_id: f"{r.borrower_id}  ·  {r.category}  ·  {r.loans} loan(s)  ·  {fmt_amt(r.exposure)}  ·  {r.stage_label}" for r in Bv.itertuples()}
+    bid = c2.selectbox("Customer (type to search)", list(labels), format_func=lambda x: labels[x], key=f"cust_sel_{mode}")
+    rows = R[R["borrower_id"] == bid]
+    b = B[B["borrower_id"] == bid].iloc[0]
+
+    k = st.columns(6)
+    k[0].metric("Loans", int(b["loans"]))
+    k[1].metric("Exposure", fmt_amt(b["exposure"]))
+    k[2].metric("Final provision", fmt_amt(b["provision"]), f"+{fmt_amt(b['topup'])} from floors" if b["topup"] > 1e-9 else "model ≥ floor", delta_color="off")
+    k[3].metric("Coverage", f"{b['coverage_%']:.2f}%")
+    k[4].metric("Customer stage", b["stage_label"], help="Worst stage across its loans")
+    k[5].metric("Share of portfolio provision", f"{b['provision'] / tot_prov * 100:.2f}%" if tot_prov else "–")
+    k2 = st.columns(6)
+    k2[0].metric("Max DPD", int(b["max_dpd"]))
+    k2[1].metric("Grade (worst)", f"{int(b['grade_orig'])} → {int(b['grade_now'])}", help="At origination → now")
+    k2[2].metric("Watchlist", "Yes" if b["watchlist"] else "No")
+    k2[3].metric("UTP / impaired flag", "Yes" if b["utp"] else "No")
+    k2[4].metric("Years in Stage 3", f"{b['years_s3']:.1f}")
+    k2[5].metric("Interest accrued p.a.", fmt_amt(b["accrued"]), f"{fmt_amt(b['suspended'])} not accrued" if b["suspended"] > 0 else None, delta_color="off")
+
+    with st.container(border=True):
+        st.markdown("**Why this stage?**")
+        for line in explain_borrower(rows):
+            st.markdown("- " + line)
+        st.markdown(f"**Monitoring:** {monitoring_text(int(b['worst_stage']))}")
+
+    st.dataframe(rows[["loan_id", "stage_label", "stage_reason", "outstanding", "undrawn_limit", "ead", "dpd", "rating_orig", "rating_curr",
+                       "pd_type", "pd_used_pct", "lgd", "ecl_adj", "topup", "provision", "binding"]],
+                 hide_index=True, width="stretch", column_config={
+        "stage_label": "Stage", "stage_reason": "Why", "pd_type": "PD used", "rating_orig": "Grade then", "rating_curr": "Grade now",
+        "outstanding": st.column_config.NumberColumn("Outstanding", format="%.1f"), "undrawn_limit": st.column_config.NumberColumn("Undrawn", format="%.1f"),
+        "ead": st.column_config.NumberColumn("EAD", format="%.1f"), "pd_used_pct": st.column_config.NumberColumn("PD %", format="%.2f"),
+        "lgd": st.column_config.NumberColumn("LGD", format="%.2f"), "ecl_adj": st.column_config.NumberColumn("Model ECL", format="%.2f"),
+        "topup": st.column_config.NumberColumn("Floor top-up", format="%.2f"), "provision": st.column_config.NumberColumn("Provision", format="%.2f")})
+
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        st.altair_chart(alt.Chart(rows[["loan_id", "outstanding", "stage_label"]]).mark_bar().encode(
+            x=alt.X("loan_id:N", sort=None, title=None), y=alt.Y("outstanding:Q", title="Exposure (₹ L)"),
+            color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
+            tooltip=["loan_id", "stage_label", alt.Tooltip("outstanding:Q", format=",.1f")]).properties(title="Exposure by loan", height=260), width="stretch")
+    with ch2:
+        bl = rows[["loan_id", "ecl_adj", "topup"]].melt("loan_id", var_name="part", value_name="amount")
+        bl["part"] = bl["part"].map({"ecl_adj": "Model ECL", "topup": "Floor top-up"})
+        st.altair_chart(alt.Chart(bl).mark_bar().encode(
+            x=alt.X("loan_id:N", sort=None, title=None), y=alt.Y("amount:Q", title="Provision (₹ L)"),
+            color=alt.Color("part:N", scale=alt.Scale(domain=["Model ECL", "Floor top-up"], range=["#8aa4c8", "#e8793a"]), title=None),
+            tooltip=["loan_id", "part", alt.Tooltip("amount:Q", format=",.2f")]).properties(title="How each loan's provision is built", height=260), width="stretch")
+
+    with st.expander("🧪 What-if: change one loan's inputs and see the customer and the portfolio move"):
+        wl = st.selectbox("Loan to change", rows["loan_id"].tolist(), key=f"wi_loan_{bid}")
+        ridx = rows.index[rows["loan_id"] == wl][0]
+        r0 = R.loc[ridx]
+        w1, w2, w3, w4 = st.columns(4)
+        w_dpd = w1.number_input("DPD", 0, 2000, int(r0["dpd"]), key=f"wi_dpd_{ridx}")
+        w_gr = w2.number_input("Grade now (1-10)", 1, 10, int(r0["rating_curr"]), key=f"wi_gr_{ridx}")
+        w_wl = w3.checkbox("Watchlist", bool(r0["watchlist"]), key=f"wi_wl_{ridx}")
+        w_utp = w4.checkbox("UTP / credit-impaired flag", bool(r0["credit_impaired"]), key=f"wi_utp_{ridx}")
+        if st.checkbox("Run the what-if", key=f"wi_run_{ridx}"):
+            sim = loans.copy()
+            sim.loc[ridx, "dpd"] = w_dpd; sim.loc[ridx, "rating_curr"] = w_gr
+            sim.loc[ridx, "watchlist"] = w_wl; sim.loc[ridx, "credit_impaired"] = w_utp
+            R2 = run_engine(sanitize(sim), A, scen, grade_pd, hz)
+            after = R2[R2["borrower_id"] == bid]
+            cmpt = pd.DataFrame({"loan_id": rows["loan_id"].to_numpy(), "stage before": rows["stage_label"].to_numpy(), "stage after": after["stage_label"].to_numpy(),
+                                 "provision before": rows["provision"].to_numpy(), "provision after": after["provision"].to_numpy()})
+            cmpt["change"] = cmpt["provision after"] - cmpt["provision before"]
+            x1, x2, x3 = st.columns(3)
+            x1.metric("Customer provision", fmt_amt(after["provision"].sum()), f"{after['provision'].sum() - rows['provision'].sum():+,.1f} lakh", delta_color="inverse")
+            x2.metric("Customer stage", after["stage"].max() and f"Stage {int(after['stage'].max())}", f"was Stage {int(rows['stage'].max())}", delta_color="off")
+            x3.metric("Portfolio provision", fmt_amt(R2["provision"].sum()), f"{R2['provision'].sum() - tot_prov:+,.1f} lakh", delta_color="inverse")
+            st.dataframe(cmpt, hide_index=True, width="stretch", column_config={
+                c_: st.column_config.NumberColumn(format="%.2f") for c_ in ["provision before", "provision after", "change"]})
+            st.caption("The simulation re-runs the whole engine, so borrower-level Stage 3 and portfolio-level floors are recomputed. Your data is not changed.")
+
+
+def render_early_warning():
+    st.markdown("**Loans close to moving up a stage**, and what that would cost. Stage 1 loans near a Stage 2 trigger, and Stage 2 loans near the NPA line, "
+                "with the extra provision if they cross it.")
+    margin = st.slider("How close counts as 'near' (% of the threshold)", 5, 50, 20, 5, key="ew_margin")
+    m = margin / 100
+    s1 = R[R["stage"] == 1]; s2 = R[R["stage"] == 2]
+    n_dpd = (s1["dpd"] > A["sicr_dpd"] * (1 - m)) & (s1["dpd"] <= A["sicr_dpd"])
+    if A["use_dpd_test"]:
+        n_pd = (s1["pd_ratio"] > A["beta"] * (1 - m)) & ((s1["pd_now_pct"] - s1["pd_orig_pct"]) > A["alpha_pp"] * (1 - m))
+    else:
+        n_pd = pd.Series(False, index=s1.index)
+    n_nt = (s1["rating_curr"] - s1["rating_orig"]) >= 2
+    near1 = s1[n_dpd | n_pd | n_nt].copy()
+    near1["why"] = (pd.Series("", index=near1.index, dtype=object)
+                    + np.where(n_dpd.loc[near1.index], f"DPD {margin}% from {A['sicr_dpd']}; ", "")
+                    + np.where(n_pd.loc[near1.index], "PD ratio close to β; ", "")
+                    + np.where(n_nt.loc[near1.index], "Grade down 2 notches; ", ""))
+    near1["moves_to"] = "Stage 2"
+    near2 = s2[(s2["dpd"] > A["npa_dpd"] * (1 - m)) & (s2["dpd"] <= A["npa_dpd"])].copy()
+    near2["why"] = "DPD " + near2["dpd"].astype(str) + f" of {A['npa_dpd']}"
+    near2["moves_to"] = "Stage 3"
+
+    def extra(sub, target):
+        if sub.empty:
+            return pd.Series(dtype=float)
+        e = ecl_if_stage(sub, target, A, scen, grade_pd, hz)
+        if target == 2:
+            return (e - sub["ecl_adj"]).clip(lower=0)
+        tk = sub["category"].map(lambda c: CATS[c]["tbl"])
+        sec_r = tk.map(lambda t_: S3_TABLES[t_][0][0]); uns_r = tk.map(lambda t_: S3_TABLES[t_][0][1])
+        sp = sub["secured_pct"] / 100
+        fl = sub["outstanding"] * (sp * sec_r + (1 - sp) * uns_r) / 100
+        return (np.maximum(e, fl) - sub["provision"]).clip(lower=0)
+
+    near1["extra_provision"] = extra(near1, 2) if len(near1) else 0.0
+    near2["extra_provision"] = extra(near2, 3) if len(near2) else 0.0
+    ew = pd.concat([near1, near2])
+    k = st.columns(4)
+    k[0].metric("Stage 1 loans near Stage 2", f"{len(near1):,}", fmt_amt(near1["outstanding"].sum()) + " exposure", delta_color="off")
+    k[1].metric("Stage 2 loans near NPA", f"{len(near2):,}", fmt_amt(near2["outstanding"].sum()) + " exposure", delta_color="off")
+    tot_extra = float(ew["extra_provision"].sum()) if len(ew) else 0.0
+    k[2].metric("Extra provision if all cross", fmt_amt(tot_extra))
+    k[3].metric("As % of current provision", f"{tot_extra / tot_prov * 100:.1f}%" if tot_prov else "–")
+    if ew.empty:
+        st.success("No loans are within the chosen distance of a trigger."); return
+    st.caption("Extra provision = ECL in the new stage (model basis, Stage 3 includes its year-0 floor) minus today's provision. Stage 2 migration ignores portfolio floor effects.")
+    byc = ew.groupby(["category", "moves_to"])["extra_provision"].sum().reset_index()
+    st.altair_chart(alt.Chart(byc).mark_bar().encode(
+        y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)), x=alt.X("extra_provision:Q", title="Extra provision if they migrate (₹ lakh)"),
+        color=alt.Color("moves_to:N", scale=alt.Scale(domain=["Stage 2", "Stage 3"], range=["#f0a500", "#d64545"]), title="Moves to"),
+        tooltip=["category", "moves_to", alt.Tooltip("extra_provision:Q", format=",.1f")]).properties(height=320), width="stretch")
+    show = ew.sort_values("extra_provision", ascending=False)[["loan_id", "borrower_id", "category", "stage_label", "moves_to", "why", "dpd",
+                                                              "pd_ratio", "outstanding", "provision", "extra_provision"]]
+    st.dataframe(show.head(300), hide_index=True, width="stretch", height=420, column_config={
+        "stage_label": "Stage now", "moves_to": "Could move to", "why": "Why it is close", "pd_ratio": st.column_config.NumberColumn("PD ratio ×", format="%.2f"),
+        "outstanding": st.column_config.NumberColumn("Outstanding", format="%.1f"), "provision": st.column_config.NumberColumn("Provision now", format="%.2f"),
+        "extra_provision": st.column_config.NumberColumn("Extra if it moves", format="%.2f")})
+    st.download_button("⬇️ Download early-warning list (CSV)", show.to_csv(index=False), "early_warning.csv", "text/csv", key="ew_dl")
+    st.caption(f"Showing the top {min(300, len(show))} of {len(show):,}. Suggested action: Stage 1 near-trigger loans move to monthly review.")
+
+
+def render_sensitivity():
+    st.markdown("**What moves the provision?** Two model-development tools: a one-at-a-time sensitivity of the total provision, and a grid to "
+                "calibrate the PD-change thresholds (β and α). Both re-run the engine on the current loan book.")
+    st.subheader("1 · Sensitivity of the total provision")
+
+    def scale_pd(kf):
+        s2 = scen.copy(); s2["pd_mult"] = s2["pd_mult"] * kf; return s2
+
+    def shift_w(dp):
+        s2 = scen.copy(); w = s2["weight_pct"].to_numpy(float).copy(); names = list(s2["scenario"])
+        if "Downside" in names and "Base" in names:
+            w[names.index("Downside")] = max(0.0, w[names.index("Downside")] + dp); w[names.index("Base")] = max(0.0, w[names.index("Base")] - dp)
+        s2["weight_pct"] = w; return s2
+
+    cases = [("PD level ×0.8 / ×1.2", ("×0.8", {}, scale_pd(0.8)), ("×1.2", {}, scale_pd(1.2))),
+             ("LGD backstop −/+10 pp", ("−10 pp", dict(lgd_sec=max(0, A["lgd_sec"] - .1), lgd_unsec=max(0, A["lgd_unsec"] - .1)), scen),
+              ("+10 pp", dict(lgd_sec=min(1, A["lgd_sec"] + .1), lgd_unsec=min(1, A["lgd_unsec"] + .1)), scen)),
+             ("Downside weight −/+10 pp", ("−10 pp", {}, shift_w(-10)), ("+10 pp", {}, shift_w(10))),
+             ("CCF 20% / 60%", ("20%", dict(ccf=.2), scen), ("60%", dict(ccf=.6), scen)),
+             ("Overlay −/+10 pp", ("−10 pp", dict(overlay=A["overlay"] - 10), scen), ("+10 pp", dict(overlay=A["overlay"] + 10), scen)),
+             ("Discounting off / on", ("off", dict(discount=False), scen), ("on", dict(discount=True), scen))]
+    if A["use_dpd_test"]:
+        cases += [("ΔPD β 2.0 / 3.5", ("β 2.0", dict(beta=2.0), scen), ("β 3.5", dict(beta=3.5), scen)),
+                  ("ΔPD α 0.25 / 1.0 pp", ("α 0.25", dict(alpha_pp=.25), scen), ("α 1.0", dict(alpha_pp=1.0), scen))]
+    if not use_opt:
+        cases += [("EAD profile flat / linear", ("flat", dict(amort_all=False), scen), ("linear", dict(amort_all=True), scen))]
+    if st.button("Run sensitivity", key="sens_run", type="primary"):
+        rows_, bar = [], st.progress(0.0)
+        for i, (name, lo, hi) in enumerate(cases):
+            for tag, (lab, ov, sc2) in (("Low", lo), ("High", hi)):
+                A2 = dict(A); A2.update(ov)
+                p_ = float(run_engine(loans, A2, sc2, grade_pd, hz)["provision"].sum())
+                rows_.append({"parameter": name, "case": tag, "setting": lab, "provision": p_, "delta": p_ - tot_prov,
+                              "delta_%": (p_ - tot_prov) / max(tot_prov, 1e-9) * 100})
+            bar.progress((i + 1) / len(cases))
+        bar.empty()
+        res = pd.DataFrame(rows_); res["abs_delta"] = res["delta"].abs()
+        st.session_state["sens_res"] = (res, tot_prov)
+    if "sens_res" in st.session_state:
+        res, base_p = st.session_state["sens_res"]
+        st.caption(f"Base provision at the time of the run: {fmt_amt(base_p)}. Re-run after changing data or assumptions.")
+        st.altair_chart(alt.Chart(res).mark_bar().encode(
+            y=alt.Y("parameter:N", sort=alt.EncodingSortField(field="abs_delta", op="max", order="descending"), title=None, axis=alt.Axis(labelLimit=240)),
+            x=alt.X("delta:Q", title="Change in total provision (₹ lakh)"), yOffset="case:N",
+            color=alt.Color("case:N", scale=alt.Scale(domain=["Low", "High"], range=["#2e9e6b", "#d64545"]), title=None),
+            tooltip=["parameter", "setting", alt.Tooltip("provision:Q", format=",.0f"), alt.Tooltip("delta:Q", format="+,.1f"),
+                     alt.Tooltip("delta_%:Q", format="+.1f")]).properties(height=60 + 38 * res["parameter"].nunique()), width="stretch")
+        st.dataframe(res[["parameter", "setting", "provision", "delta", "delta_%"]], hide_index=True, width="stretch", column_config={
+            "provision": st.column_config.NumberColumn("Provision", format="%.1f"), "delta": st.column_config.NumberColumn("Change", format="%+.1f"),
+            "delta_%": st.column_config.NumberColumn("Change %", format="%+.1f")})
+
+    st.subheader("2 · Calibrating the PD-change thresholds (β and α)")
+    if not A["use_dpd_test"]:
+        st.info("Switch on 'PD change vs origination (ΔPD)' in the sidebar staging rules to use this grid."); return
+    st.caption(f"Staging only, current basis: {A['pd_basis']}, rule: {A['pd_mode']}. Pick the cell where Stage 2 is large enough to catch real deterioration "
+               "but not so large that it floods Stage 2 with noise. RBI sets no thresholds: yours must be documented (para 29-30).")
+    betas = sorted({1.5, 2.0, 2.5, 3.0, 4.0, 5.0, float(A["beta"])}); alphas = sorted({0.0, 0.25, 0.5, 1.0, 2.0, float(A["alpha_pp"])})
+    if st.button("Run calibration grid", key="calib_run"):
+        g_rows = []
+        for be in betas:
+            for al in alphas:
+                A2 = dict(A); A2.update(beta=be, alpha_pp=al)
+                x = stage_loans(loans, A2, grade_pd, hz)
+                s2m = x["stage"] == 2
+                only = s2m & x["trg_pd"] & ~(x[["trg_dpd", "trg_rev", "trg_notch", "trg_watch", "trg_qual", "trg_cross"]].any(axis=1))
+                g_rows.append({"beta": be, "alpha": al, "Stage 2 share of exposure (%)": float(x.loc[s2m, "outstanding"].sum() / max(x["outstanding"].sum(), 1e-9) * 100),
+                               "Loans flagged only by ΔPD": int(only.sum())})
+        st.session_state["calib_res"] = pd.DataFrame(g_rows)
+    if "calib_res" in st.session_state:
+        grid = st.session_state["calib_res"]
+        metric = st.radio("Show", ["Stage 2 share of exposure (%)", "Loans flagged only by ΔPD"], horizontal=True, key="calib_metric")
+        fmt = ".1f" if "share" in metric else "d"
+        ax = dict(x=alt.X("alpha:O", title="α: absolute increase (percentage points)"), y=alt.Y("beta:O", title="β: relative multiple"))
+        rect = alt.Chart(grid).mark_rect().encode(**ax, color=alt.Color(f"{metric}:Q", scale=alt.Scale(scheme="blues"), title=None),
+                                                  tooltip=["beta", "alpha", alt.Tooltip(f"{metric}:Q", format=".1f")])
+        txt = alt.Chart(grid).mark_text().encode(**ax, text=alt.Text(f"{metric}:Q", format=fmt),
+                                                 color=alt.condition(alt.datum[metric] > grid[metric].median(), alt.value("white"), alt.value("#14213d")))
+        cur = grid[(grid["beta"] == float(A["beta"])) & (grid["alpha"] == float(A["alpha_pp"]))]
+        outline = alt.Chart(cur).mark_rect(filled=False, stroke="#e8793a", strokeWidth=3).encode(**ax)
+        st.altair_chart((rect + txt + outline).properties(height=300), width="stretch")
+        st.caption("Orange outline = your current setting. Re-run the grid after changing data or other staging rules.")
+
+
+# ----------------------------------------------------------------------------
 # 4. STATE + SIDEBAR
 # ----------------------------------------------------------------------------
 if "loans" not in st.session_state:
@@ -673,9 +1183,9 @@ hz = hazards_from_curve(ts_used[[f"y{t}" for t in YRS]].to_numpy(float))        
 # ----------------------------------------------------------------------------
 st.title("RBI ECL Model Lab")
 st.caption("Edit the data or the assumptions — staging, ECL, floors and the dashboard recompute instantly.")
-tab_dash, tab_data, tab_calc, tab_exp, tab_floor, tab_rep, tab_audit, tab_guide = st.tabs(
-    ["📊 Dashboard", "🗂️ Data (editable)", "🧮 Account-level ECL", "🔍 Loan explorer", "🧱 Prudential floors",
-     "📑 Annex-4 style tables", "🕵️ Audit checks", "📖 Guide & limits"])
+tab_dash, tab_data, tab_cust, tab_calc, tab_exp, tab_ew, tab_sens, tab_floor, tab_rep, tab_audit, tab_guide = st.tabs(
+    ["📊 Dashboard", "🗂️ Data (editable)", "👤 Customer explorer", "🧮 Account-level ECL", "🔍 Loan explorer", "🚨 Early warning",
+     "🎛️ Sensitivity & calibration", "🧱 Prudential floors", "📑 Annex-4 style tables", "🕵️ Audit checks", "📖 Guide & limits"])
 
 # ---- Data tab (rendered first: its output feeds everything) ------------------
 with tab_data:
@@ -733,142 +1243,22 @@ if loans.empty:
 
 R = run_engine(loans, A, scen, grade_pd, hz)
 FS = floor_summary(R)
+R["dpd_bucket"] = pd.cut(R["dpd"], [-1, 0, 30, 60, 90, 10**6], labels=["Current", "1-30", "31-60", "61-90", ">90"]).astype(str)
 
 tot_out = R["outstanding"].sum(); tot_ead = R["ead"].sum()
 tot_model = R["ecl_adj"].sum(); tot_prov = R["provision"].sum(); tot_top = R["topup"].sum()
 
 # ---- Dashboard ---------------------------------------------------------------
 with tab_dash:
-    k = st.columns(6)
-    k[0].metric("Gross exposure", fmt_amt(tot_out))
-    k[1].metric("Model ECL", fmt_amt(tot_model))
-    k[2].metric("Final provision", fmt_amt(tot_prov), f"+{fmt_amt(tot_top)} from floors" if tot_top > 0 else "no floor top-up")
-    k[3].metric("Coverage ratio", f"{tot_prov / tot_out * 100:.2f}%" if tot_out else "–")
-    k[4].metric("Stage 2 share", f"{R.loc[R.stage == 2, 'outstanding'].sum() / tot_out * 100:.1f}%" if tot_out else "–")
-    k[5].metric("Stage 3 share", f"{R.loc[R.stage == 3, 'outstanding'].sum() / tot_out * 100:.1f}%" if tot_out else "–")
-
-    acc = R["interest_accrued"].sum()
-    k2 = st.columns(3)
-    k2[0].metric("Interest accrued p.a. (Stage 1+2)", fmt_amt(acc), help="Para 113: EIR × gross carrying amount")
-    k2[1].metric("Interest NOT accrued (Stage 3)", fmt_amt(R["interest_suspended"].sum()),
-                 help="Para 115: credit-impaired assets earn interest on a cash basis only")
-    k2[2].metric("Provision ÷ accrued interest", f"{tot_prov / acc * 100:.0f}%" if acc else "–",
-                 help="How many years of interest income the allowance equals")
-
-    by_stage = R.groupby("stage_label").agg(loans=("loan_id", "count"), exposure=("outstanding", "sum"),
-                                            provision=("provision", "sum"), model=("ecl_adj", "sum")).reset_index()
-    by_stage["coverage_%"] = by_stage["provision"] / by_stage["exposure"].where(by_stage["exposure"] > 0, 1) * 100
-
-    a, b = st.columns(2)
-    with a:
-        st.subheader("Exposure by stage")
-        st.altair_chart(alt.Chart(by_stage).mark_arc(innerRadius=70).encode(
-            theta="exposure:Q", color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
-            tooltip=["stage_label", "loans", alt.Tooltip("exposure:Q", format=",.0f")]).properties(height=300),
-            width="stretch")
-    with b:
-        st.subheader("Provision and coverage by stage")
-        bars = alt.Chart(by_stage).mark_bar().encode(
-            x=alt.X("stage_label:N", title=None), y=alt.Y("provision:Q", title="Provision (₹ L)"),
-            color=alt.Color("stage_label:N", scale=STAGE_COLORS, legend=None),
-            tooltip=["stage_label", alt.Tooltip("provision:Q", format=",.0f"), alt.Tooltip("coverage_%:Q", format=".2f")])
-        txt = bars.mark_text(dy=-8).encode(text=alt.Text("coverage_%:Q", format=".2f"))
-        st.altair_chart((bars + txt).properties(height=300), width="stretch")
-        st.caption("Number above each bar = coverage % (provision ÷ exposure)")
-
-    c, d_ = st.columns(2)
-    with c:
-        st.subheader("Provision by product category")
-        st.altair_chart(alt.Chart(FS).mark_bar().encode(
-            y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
-            x=alt.X("sum(provision):Q", title="Provision (₹ L)"),
-            color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
-            tooltip=["category", "stage_label", alt.Tooltip("provision:Q", format=",.0f")]).properties(height=420),
-            width="stretch")
-    with d_:
-        st.subheader("Model ECL vs final provision (after floors)")
-        cat_cmp = R.groupby("category").agg(model_ecl=("ecl_adj", "sum"), provision=("provision", "sum")).reset_index()
-        cat_long = cat_cmp.melt("category", var_name="measure", value_name="amount")
-        cat_long["measure"] = cat_long["measure"].map({"model_ecl": "Model ECL", "provision": "Final (with floors)"})
-        st.altair_chart(alt.Chart(cat_long).mark_bar().encode(
-            y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
-            x=alt.X("amount:Q", title="₹ lakh"), yOffset="measure:N",
-            color=alt.Color("measure:N", scale=alt.Scale(range=["#8aa4c8", "#e8793a"]), title=None),
-            tooltip=["category", "measure", alt.Tooltip("amount:Q", format=",.0f")]).properties(height=420),
-            width="stretch")
-
-    e, f = st.columns(2)
-    with e:
-        st.subheader("Scenario view (total ECL before floors)")
-        names = scen["scenario"].tolist()
-        sc = pd.DataFrame({"scenario": names + ["Weighted"],
-                           "ecl": [R[f"ecl_{n}"].sum() * (1 + A["overlay"] / 100) for n in names] + [tot_model]})
-        st.altair_chart(alt.Chart(sc).mark_bar().encode(
-            x=alt.X("scenario:N", sort=None, title=None), y=alt.Y("ecl:Q", title="ECL (₹ L)"),
-            color=alt.condition(alt.datum.scenario == "Weighted", alt.value("#e8793a"), alt.value("#8aa4c8")),
-            tooltip=["scenario", alt.Tooltip("ecl:Q", format=",.0f")]).properties(height=300), width="stretch")
-    with f:
-        st.subheader("Exposure by DPD bucket and stage")
-        R["dpd_bucket"] = pd.cut(R["dpd"], [-1, 0, 30, 60, 90, 10**6],
-                                 labels=["Current", "1-30", "31-60", "61-90", ">90"]).astype(str)
-        dd = R.groupby(["dpd_bucket", "stage_label"])["outstanding"].sum().reset_index()
-        st.altair_chart(alt.Chart(dd).mark_bar().encode(
-            x=alt.X("dpd_bucket:N", sort=["Current", "1-30", "31-60", "61-90", ">90"], title="Days past due"),
-            y=alt.Y("outstanding:Q", title="Exposure (₹ L)"),
-            color=alt.Color("stage_label:N", scale=STAGE_COLORS, title="Stage"),
-            tooltip=["dpd_bucket", "stage_label", alt.Tooltip("outstanding:Q", format=",.0f")]).properties(height=300),
-            width="stretch")
-
-    g1, g2 = st.columns(2)
-    with g1:
-        st.subheader("Two PDs: cumulative default curve by grade")
-        cv = ts_used.melt("grade", var_name="year", value_name="cum_pd")
-        cv["year"] = cv["year"].str[1:].astype(int); cv["grade"] = cv["grade"].astype(str)
-        st.altair_chart(alt.Chart(cv).mark_line(point=True).encode(
-            x=alt.X("year:O", title="Years from today"), y=alt.Y("cum_pd:Q", title="Cumulative PD (%)"),
-            color=alt.Color("grade:N", title="Rating grade", sort=[str(i) for i in range(1, 11)]),
-            tooltip=["grade", "year", alt.Tooltip("cum_pd:Q", format=".2f")]).properties(height=300), width="stretch")
-        st.caption("Year 1 of each line = the 12-month PD (Stage 1). The whole line = the lifetime PD (Stage 2).")
-    with g2:
-        st.subheader("Average PD by stage: 12-month vs lifetime")
-        wsum = R.groupby("stage_label")["ead"].sum()
-        pdl = pd.DataFrame({"12-month PD": (R["pd12_pct"] * R["ead"]).groupby(R["stage_label"]).sum() / wsum,
-                            "Lifetime PD": (R["pd_life_pct"] * R["ead"]).groupby(R["stage_label"]).sum() / wsum}).reset_index()
-        pdl = pdl.melt("stage_label", var_name="type", value_name="pd")
-        st.altair_chart(alt.Chart(pdl).mark_bar().encode(
-            x=alt.X("stage_label:N", title=None), xOffset="type:N", y=alt.Y("pd:Q", title="EAD-weighted PD (%)"),
-            color=alt.Color("type:N", scale=alt.Scale(range=["#2e9e6b", "#f5a524"]), title=None),
-            tooltip=["stage_label", "type", alt.Tooltip("pd:Q", format=".2f")]).properties(height=300), width="stretch")
-        st.caption("Stage 1 loans are provisioned on the 12-month PD, Stage 2 on the lifetime PD, Stage 3 at 100%.")
-
-    st.subheader("What pushes loans into Stage 2?")
-    TRG = {"DPD backstop": "trg_dpd", "Revolving over limit": "trg_rev", "PD vs origination": "trg_pd", "Rating notches": "trg_notch",
-           "Watchlist": "trg_watch", "Covenant / collateral": "trg_qual", "Other loan of borrower late": "trg_cross"}
-    if not use_opt:
-        TRG = {k: v for k, v in TRG.items() if v not in ("trg_rev", "trg_qual")}     # need optional columns
-    s2d = R[R["stage"] == 2]
-    if len(s2d):
-        flg = s2d[list(TRG.values())].astype(int)
-        nfl = flg.sum(axis=1)
-        trows = []
-        for lab_, col_ in TRG.items():
-            trows.append({"trigger": lab_, "measure": "Loans it flags", "loans": int(flg[col_].sum())})
-            trows.append({"trigger": lab_, "measure": "Loans it is the ONLY trigger for", "loans": int(((flg[col_] == 1) & (nfl == 1)).sum())})
-        st.altair_chart(alt.Chart(pd.DataFrame(trows)).mark_bar().encode(
-            y=alt.Y("trigger:N", sort=None, title=None), x=alt.X("loans:Q", title="Stage 2 loans"), yOffset="measure:N",
-            color=alt.Color("measure:N", scale=alt.Scale(range=["#8aa4c8", "#e8793a"]), title=None),
-            tooltip=["trigger", "measure", "loans"]).properties(height=300), width="stretch")
-        st.caption("A trigger whose 'only trigger' bar is near zero adds little on its own: a candidate to drop for a leaner model. "
-                   "Stage 2 loans held there by probation rules are not shown.")
-
-    binding = FS[FS["topup"] > 1e-9].sort_values("topup", ascending=False)
-    if len(binding):
-        top = binding.iloc[0]
-        st.info(f"🧱 **Prudential floors bind in {len(binding)} category-stage buckets** and add {fmt_amt(tot_top)} "
-                f"({tot_top / tot_prov * 100:.1f}% of the final provision). Largest top-up: **{top['category']} – {top['stage_label']}** "
-                f"({fmt_amt(top['topup'])}). Your model numbers are below RBI's backstop there — expect questions.")
+    fc1, fc2 = st.columns([4, 1])
+    sel_cat = fc1.multiselect("Filter the dashboard by product category (empty = all)", CAT_NAMES, key="dash_cat")
+    top_n = int(fc2.number_input("Top-N customers", 5, 30, 10, key="dash_topn"))
+    Rv = R[R["category"].isin(sel_cat)] if sel_cat else R
+    FSv = FS[FS["category"].isin(sel_cat)] if sel_cat else FS
+    if Rv.empty:
+        st.info("No loans in this selection.")
     else:
-        st.success("Model ECL is above the RBI prudential floor in every bucket.")
+        render_dashboard(Rv, FSv, top_n)
 
 # ---- Account-level tab -------------------------------------------------------
 with tab_calc:
@@ -1113,6 +1503,14 @@ with tab_audit:
                "and the audit trail required by Chapter V and Annex 3.")
 
 
+# ---- New analysis tabs ---------------------------------------------------------------
+with tab_cust:
+    render_customer()
+with tab_ew:
+    render_early_warning()
+with tab_sens:
+    render_sensitivity()
+
 # ---- Guide ----------------------------------------------------------------------
 with tab_guide:
     st.markdown("""
@@ -1142,6 +1540,13 @@ The app uses rating *grades*; the PD for each grade comes from the two PD tables
 | `covenant_breach`, `collateral_decline` | False | Annex 1 qualitative triggers |
 | `dpd_rebuttal` | False | documented rebuttal of the 30-DPD presumption |
 | `prior_stage`, `months_regular`, `restructured` | stage 1, 24 months, not restructured | upgrade / probation rules, stage migration table |
+
+### The tabs
+**Dashboard** (filter by category): *Overview* (KPIs, plain-language summary, stage mix, model-to-final waterfall), *Concentration* (category and customer views, coverage heatmap),
+*Staging & PD* (Stage 2 triggers, DPD buckets, PD now vs origination, the two PD curves), *Floors & scenarios*.
+**Customer explorer**: one borrower with its loans, why it is in its stage, provision build-up and a what-if that re-runs the engine.
+**Early warning**: loans close to a trigger and the extra provision if they cross it.
+**Sensitivity & calibration**: tornado of what moves the provision, and a β × α grid for the PD-change thresholds.
 
 ### Data rules (checked on every edit or upload)
 Columns depend on each other, so the generator builds them in order (borrower state, then grades and flags, then DPD, then limits and history) and the Data tab checks the same rules:
