@@ -88,77 +88,128 @@ STAGE_COLORS = alt.Scale(domain=["Stage 1", "Stage 2", "Stage 3"], range=["#2e9e
 # ----------------------------------------------------------------------------
 # 2. DATA: generator + sanitiser
 # ----------------------------------------------------------------------------
+COV_CATS = {"Corporate loan", "Loan to small & micro enterprises", "Loan to medium enterprises",
+            "Loan to banks / NBFCs / regulated FIs", "Other claims secured by commercial RE",
+            "Restructured standard advances", "Other / residual"}          # business loans that carry covenants
+
+
 def generate_loans(n: int, seed: int, stress: float, with_optional: bool = False) -> pd.DataFrame:
+    """Synthetic loan book whose columns follow each other (see RULES below):
+       borrower state -> grades, watchlist, UTP flag, years in Stage 3 -> loan DPD -> limits, flags, history."""
     rng = np.random.default_rng(seed)
     names = CAT_NAMES
     w = np.array([CATS[k]["w"] for k in names], float)
     cat_idx = rng.choice(len(names), size=n, p=w / w.sum())
     cat = np.array([names[i] for i in cat_idx])
+    pc = lambda key: np.array([CATS[c][key] for c in cat])
 
-    # borrower ids (several loans can share a borrower -> shows borrower-level Stage 3)
+    # ---- borrowers (loans in a category can share a borrower) ----
     borrower = np.empty(n, dtype=object)
     for ci in range(len(names)):
         m = cat_idx == ci
         k = int(m.sum())
         if k:
             borrower[m] = [f"B{ci:02d}-{x}" for x in rng.integers(1, max(2, int(k * 1.6)) + 1, size=k)]
+    ub, first, inv = np.unique(borrower.astype(str), return_index=True, return_inverse=True)
+    nb = len(ub)
+    b_cat = cat[first]
+    sov_b = b_cat == "State government exposures"
 
-    def per_cat(key):
-        return np.array([CATS[c][key] for c in cat])
+    # latent borrower state: 0 healthy, 1 watch, 2 late (31-90 days), 3 NPA
+    p3, p2, p1 = 0.018 + 0.050 * stress, 0.030 + 0.060 * stress, 0.030 + 0.060 * stress
+    u = rng.random(nb)
+    state = np.select([u < p3, u < p3 + p2, u < p3 + p2 + p1], [3, 2, 1], default=0)
+    state = np.where(sov_b, 0, state)
+    utp_only = (rng.random(nb) < 0.004 + 0.008 * stress) & (state < 3) & ~sov_b        # distress / concession without 90 days
+    stage3_b = (state == 3) | utp_only
+    b_utp = utp_only | ((state == 3) & (rng.random(nb) < 0.10))
+    b_watch = (~stage3_b) & (((state == 1) & (rng.random(nb) < 0.8)) | ((state == 2) & (rng.random(nb) < 0.5))
+                             | ((state == 0) & (rng.random(nb) < 0.008)))
+    b_watch = b_watch & ~sov_b
 
-    outstanding = np.round(per_cat("scale") * np.exp(rng.normal(0, 0.7, n)), 2)
-    is_rev = rng.random(n) < per_cat("rev")
-    undrawn = np.where(is_rev, np.round(outstanding * rng.uniform(0, 0.5, n), 2), 0.0)
-    amort = (rng.random(n) < per_cat("amort")) & ~is_rev
+    # borrower grades follow the state
+    rm_b = np.array([CATS[c]["rmean"] for c in b_cat])
+    b_orig = np.clip(np.round(rng.normal(rm_b, 1.2)), 1, 10).astype(int)
+    bump = np.select([state == 0, state == 1, state == 2],
+                     [rng.choice([-1, 0, 1, 2], nb, p=[.08, .72, .15, .05]), rng.integers(2, 5, nb), rng.integers(1, 4, nb)],
+                     default=rng.integers(3, 6, nb))
+    b_curr = np.where(sov_b, b_orig, np.clip(b_orig + bump, 1, 10))
+    b_curr = np.where(b_watch | (state == 1), np.maximum(b_curr, 6), b_curr)
+    b_curr = np.where(state == 2, np.maximum(b_curr, 7), b_curr)
+    b_curr = np.minimum(np.where(stage3_b, np.maximum(b_curr, 9), b_curr), 10)
 
-    r_orig = np.clip(np.round(rng.normal(per_cat("rmean"), 1.3)), 1, 10).astype(int)
-    p = np.array([0.78 - 0.2 * stress, 0.12, 0.06 + 0.07 * stress, 0.03 + 0.07 * stress, 0.01 + 0.06 * stress])
-    p = p / p.sum()
-    r_curr = np.clip(r_orig + rng.choice([0, 1, 2, 3, 4], size=n, p=p), 1, 10).astype(int)
+    # years in Stage 3 belong to the borrower: the same for all its loans
+    yrs_b = np.where(state == 3,
+                     np.clip(rng.choice([0.25, 0.7, 1.5, 2.5, 3.5, 5.0], nb, p=[.25, .2, .2, .15, .1, .1])
+                             + rng.uniform(-0.15, 0.15, nb), 0.03, None),
+                     np.where(utp_only, np.round(rng.uniform(0.1, 1.0, nb), 2), 0.0))
 
-    # delinquency
-    pb = np.array([1 - (0.078 + 0.16 * stress), 0.04 + 0.05 * stress, 0.02 + 0.04 * stress,
-                   0.010 + 0.03 * stress, 0.008 + 0.04 * stress])
-    pb = pb / pb.sum()
-    b = rng.choice(5, size=n, p=pb)
-    dpd = np.select([b == 0, b == 1, b == 2, b == 3],
-                    [np.zeros(n), rng.integers(1, 31, n), rng.integers(31, 61, n), rng.integers(61, 91, n)],
-                    default=rng.integers(91, 700, n)).astype(int)
+    # ---- loans inherit from their borrower ----
+    st_l, s3_l, sov_l = state[inv], stage3_b[inv], sov_b[inv]
+    is_first = np.zeros(n, bool); is_first[first] = True
+    r_orig = np.clip(b_orig[inv] + rng.choice([-1, 0, 1], n, p=[.15, .70, .15]), 1, 10)
+    r_curr = np.clip(b_curr[inv] + rng.choice([-1, 0, 1], n, p=[.10, .80, .10]), 1, 10)
+    r_curr = np.where(sov_l, r_orig, r_curr)
+    impaired = b_utp[inv]
+    yrs = yrs_b[inv]
 
-    over = np.where(is_rev & (rng.random(n) < 0.10 + 0.08 * stress), rng.integers(1, 90, n), 0)
-    over = np.where(is_rev & (rng.random(n) < 0.01 + 0.01 * stress), rng.integers(90, 200, n), over)
+    # DPD follows the borrower state; NPA age (years) bounds how high it can be
+    npa_loan = (st_l == 3) & (is_first | (rng.random(n) < 0.75))          # at least one NPA loan per NPA borrower
+    days_in = np.round(yrs * 365)
+    dpd = np.zeros(n, int)
+    dpd = np.where(npa_loan, 90 + np.maximum(1, np.round(days_in * rng.uniform(0.5, 1.0, n))), dpd)
+    dpd = np.where((st_l == 3) & ~npa_loan, rng.integers(0, 61, n), dpd)   # other loans of an NPA borrower: Stage 3 by contagion
+    dpd = np.where(st_l == 2, np.where(is_first | (rng.random(n) < 0.7), rng.integers(31, 91, n), rng.integers(0, 31, n)), dpd)
+    small_late = (st_l <= 1) & (rng.random(n) < np.where(st_l == 1, 0.12, 0.04))
+    dpd = np.where(small_late, rng.integers(1, 31, n), dpd)
+    dpd = np.where(sov_l, 0, dpd).astype(int)
 
-    sovereign = cat == "State government exposures"          # keep the sovereign-like bucket clean
-    dpd = np.where(sovereign, 0, dpd)
-    over = np.where(sovereign, 0, over)
-    watch = (r_curr >= 7) & (rng.random(n) < 0.25)
-    impaired = (rng.random(n) < 0.003) & ~sovereign
-    is_npa = (dpd > 90) | impaired | (over >= 90)
-    yrs = np.where(is_npa, rng.choice([0.4, 1.5, 2.5, 3.5, 5.0], size=n, p=[0.45, 0.22, 0.14, 0.10, 0.09]), 0.0)
-    # stage at the previous reporting date + cure history (drives the upgrade rules, para 77-80)
-    prior = np.where(is_npa, np.where(rng.random(n) < 0.8, 3, 2), np.where(dpd > 30, np.where(rng.random(n) < 0.5, 2, 1), 1))
-    cured3 = (~is_npa) & (rng.random(n) < 0.012)                     # recovered NPAs
-    cured2 = (~is_npa) & (dpd <= 30) & (rng.random(n) < 0.04)        # recovered Stage 2 loans
-    prior = np.where(cured3, 3, np.where(cured2, 2, prior))
-    restr = (cat == "Restructured standard advances") | (cured3 & (rng.random(n) < 0.4)) | (rng.random(n) < 0.01)
-    months = np.where(cured3 | cured2, np.round(rng.uniform(0, 24, n)), 24.0)
+    # grades never contradict delinquency or flags
+    watch = b_watch[inv] & ~s3_l
+    r_curr = np.where(s3_l, np.maximum(r_curr, 9), r_curr)
+    r_curr = np.where((dpd > 60) & (dpd <= 90), np.maximum(r_curr, 7), r_curr)
+    r_curr = np.where(((dpd > 30) & (dpd <= 60)) | watch, np.maximum(r_curr, 6), r_curr)
+    r_curr = np.minimum(r_curr, 10).astype(int)
 
-    lo = np.array([CATS[c]["term"][0] for c in cat]); hi = np.array([CATS[c]["term"][1] for c in cat])
-    term = np.round(rng.uniform(lo, hi), 1)
+    # ---- exposure, security, terms ----
+    outstanding = np.round(pc("scale") * np.exp(rng.normal(0, 0.7, n)), 2)
+    is_rev = rng.random(n) < pc("rev")
+    undrawn = np.where(is_rev & ~s3_l, np.round(outstanding * rng.uniform(0, 0.5, n), 2), 0.0)     # frozen once Stage 3
+    amort = (rng.random(n) < pc("amort")) & ~is_rev
+    over = np.where(is_rev, np.where(dpd > 90, dpd, np.minimum(dpd, 89)), 0)                       # over-limit days mirror DPD
+
     slo = np.array([CATS[c]["sec"][0] for c in cat]); shi = np.array([CATS[c]["sec"][1] for c in cat])
     sec = np.round(rng.uniform(slo, shi))
-    eir = np.round(per_cat("eir") + rng.normal(0, 0.7, n), 2)
-    covenant = (rng.random(n) < 0.02 + 0.04 * stress) & ~sovereign
-    coll_dec = (rng.random(n) < 0.02 + 0.04 * stress) & (sec > 0)
-    rebut = (dpd > 30) & (dpd <= 60) & (rng.random(n) < 0.10)
+    coll = np.where(sec > 0, pc("coll"), "None")
+    lo = np.array([CATS[c]["term"][0] for c in cat]); hi = np.array([CATS[c]["term"][1] for c in cat])
+    term = np.round(rng.uniform(lo, hi), 1)
+    term = np.where(s3_l, np.maximum(0.1, np.round(term * rng.uniform(0.3, 1.0, n), 1)), term)     # NPAs are near / past maturity
+    eir = np.round(np.clip(pc("eir") + 0.4 * (r_orig - pc("rmean")) + rng.normal(0, 0.5, n), 4, 30), 2)  # riskier at origination -> pricier
+
+    # ---- optional columns ----
+    covenant = np.isin(cat, list(COV_CATS)) & (rng.random(n) < np.where(st_l >= 1, 0.25, 0.01)) & ~sov_l
+    coll_dec = (sec > 0) & (coll != SPECIAL_COLL) & (rng.random(n) < np.where(st_l >= 1, 0.20, 0.01))
+    rebut = (dpd > 30) & (dpd <= 60) & ~s3_l & (rng.random(n) < 0.08)
+
+    now = np.where(s3_l | (dpd > 90), 3, np.where((dpd > 30) | watch | (r_curr - r_orig >= 3), 2, 1))
+    pr = rng.random(n)
+    prior = np.where(now == 3, np.select([pr < .75, pr < .97], [3, 2], default=1),
+            np.where(now == 2, np.select([pr < .60, pr < .95], [2, 1], default=3),
+                     np.select([pr < .93, pr < .98], [1, 2], default=3)))
+    prior = np.where((prior == 3) & (now < 3) & (dpd > 0), 2, prior)      # a loan that left Stage 3 has cleared its arrears
+    improved = prior > now
+    months = np.where((dpd > 0) | (now == 3), 0.0,
+                      np.where(improved, np.round(rng.uniform(0, 18, n)), np.round(rng.uniform(12, 60, n))))
+    restr = (cat == "Restructured standard advances") | (improved & (prior == 3) & (rng.random(n) < 0.4))
 
     df = pd.DataFrame({
         "loan_id": [f"LN{i + 1:05d}" for i in range(n)], "borrower_id": borrower, "category": cat,
         "outstanding": outstanding, "undrawn_limit": undrawn, "is_revolving": is_rev, "amortising": amort,
         "dpd": dpd, "days_over_limit": over, "rating_orig": r_orig, "rating_curr": r_curr,
         "watchlist": watch, "covenant_breach": covenant, "collateral_decline": coll_dec,
-        "dpd_rebuttal": rebut, "credit_impaired": impaired, "years_in_stage3": yrs, "prior_stage": prior, "restructured": restr, "months_regular": months, "secured_pct": sec,
-        "collateral_type": per_cat("coll"), "remaining_term_yrs": term, "eir_pct": eir,
+        "dpd_rebuttal": rebut, "credit_impaired": impaired, "years_in_stage3": yrs, "prior_stage": prior,
+        "restructured": restr, "months_regular": months, "secured_pct": sec,
+        "collateral_type": coll, "remaining_term_yrs": term, "eir_pct": eir,
     })
     if not with_optional:
         df = df[CORE_COLS]                       # optional columns are then filled with safe defaults by sanitize()
@@ -170,7 +221,7 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     for c in COLS:
         if c not in d.columns:
-            d[c] = False if c in BOOL_COLS else (NUM_DEFAULT.get(c, ""))
+            d[c] = False if c in BOOL_COLS else (np.nan if c == "months_regular" else NUM_DEFAULT.get(c, ""))
     d = d[COLS].reset_index(drop=True)
 
     for c in ["loan_id", "borrower_id", "category", "collateral_type"]:
@@ -183,6 +234,8 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
     d.loc[~d["category"].isin(CAT_NAMES), "category"] = DEFAULT_CAT
     d.loc[~d["collateral_type"].isin(COLL_TYPES), "collateral_type"] = "None"
 
+    dp_ = pd.to_numeric(d["dpd"], errors="coerce").fillna(0)
+    d["months_regular"] = pd.to_numeric(d["months_regular"], errors="coerce").fillna(pd.Series(np.where(dp_ > 0, 0.0, 24.0), index=d.index))
     for c, dv in NUM_DEFAULT.items():
         d[c] = pd.to_numeric(d[c], errors="coerce").fillna(dv).astype(float)
     for c in BOOL_COLS:
@@ -206,6 +259,94 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # 3. ENGINE
 # ----------------------------------------------------------------------------
+# ---- Basic consistency rules between columns ------------------------------------------------
+RULES = [  # (id, rule, needs optional columns)
+    ("R01", "Secured % above 0 needs a collateral type; 0% means collateral 'None'", False),
+    ("R02", "No undrawn limit on Stage 3 borrowers (the facility is frozen)", False),
+    ("R03", "Years in Stage 3 above 0 only for Stage 3 borrowers (NPA > 90 DPD, UTP flag, or another loan of that borrower)", False),
+    ("R04", "DPD above 90 cannot exceed 90 + days spent in Stage 3 (+15 days tolerance)", False),
+    ("R05", "Stage 3 borrowers are not on the watchlist", False),
+    ("R06", "Stage 3 borrowers have a weak current grade (9 or 10)", False),
+    ("R07", "Grade now is at least 7 when DPD is 61-90, and at least 6 when DPD is 31-60 or on the watchlist", False),
+    ("R08", "Watchlist, UTP flag and years in Stage 3 agree across all loans of the same borrower", False),
+    ("R09", "A facility is not both revolving and amortising", True),
+    ("R10", "Days over limit only on revolving facilities", True),
+    ("R11", "Collateral value drop needs secured exposure", True),
+    ("R12", "30-DPD rebuttal only when DPD is 31-90", True),
+    ("R13", "Months of regular payment is 0 while the loan is past due", True),
+    ("R14", "A loan that was Stage 3 and is not any more has DPD = 0", True),
+]
+
+
+def _s3_like(d: pd.DataFrame) -> pd.Series:
+    acct = (d["dpd"] > 90) | d["credit_impaired"] | (d["is_revolving"] & (d["days_over_limit"] >= 90))
+    return acct | acct.groupby(d["borrower_id"]).transform("any")
+
+
+def rule_masks(d: pd.DataFrame) -> dict:
+    s3 = _s3_like(d)
+    g = d.groupby("borrower_id")
+    rc, dpd = d["rating_curr"], d["dpd"]
+    yb = d["years_in_stage3"].where(s3).groupby(d["borrower_id"]).transform("nunique")
+    return {
+        "R01": ((d["secured_pct"] > 0) & (d["collateral_type"] == "None")) | ((d["secured_pct"] == 0) & (d["collateral_type"] != "None")),
+        "R02": s3 & (d["undrawn_limit"] > 0),
+        "R03": (d["years_in_stage3"] > 0) & ~s3,
+        "R04": (dpd > 90) & ((dpd - 90) > d["years_in_stage3"] * 365 + 15),
+        "R05": s3 & d["watchlist"],
+        "R06": s3 & (rc < 9),
+        "R07": (((dpd > 60) & (dpd <= 90)) & (rc < 7)) | ((((dpd > 30) & (dpd <= 60)) | d["watchlist"]) & (rc < 6)),
+        "R08": (g["watchlist"].transform("nunique") > 1) | (g["credit_impaired"].transform("nunique") > 1) | (yb > 1),
+        "R09": d["is_revolving"] & d["amortising"],
+        "R10": ~d["is_revolving"] & (d["days_over_limit"] > 0),
+        "R11": d["collateral_decline"] & (d["secured_pct"] == 0),
+        "R12": d["dpd_rebuttal"] & ~((dpd > 30) & (dpd <= 90)),
+        "R13": (dpd > 0) & (d["months_regular"] > 0),
+        "R14": (d["prior_stage"] == 3) & ~s3 & (dpd > 0),
+    }
+
+
+def check_rules(d: pd.DataFrame, with_optional: bool) -> pd.DataFrame:
+    masks = rule_masks(d)
+    rows = []
+    for rid, text, opt in RULES:
+        if opt and not with_optional:
+            continue
+        bad = masks[rid]
+        rows.append({"Rule": rid, "What it checks": text, "Violations": int(bad.sum()),
+                     "Examples": ", ".join(d.loc[bad, "loan_id"].head(3).tolist())})
+    return pd.DataFrame(rows)
+
+
+def apply_rules(d: pd.DataFrame, with_optional: bool) -> pd.DataFrame:
+    """Conservative fixes: remove the contradiction, never invent security or good news."""
+    f = d.copy()
+    for _ in range(2):
+        g = f.groupby("borrower_id")
+        f["watchlist"] = g["watchlist"].transform("max").astype(bool)
+        f["credit_impaired"] = g["credit_impaired"].transform("max").astype(bool)
+        f.loc[(f["secured_pct"] > 0) & (f["collateral_type"] == "None"), "secured_pct"] = 0.0
+        f.loc[(f["secured_pct"] == 0) & (f["collateral_type"] != "None"), "collateral_type"] = "None"
+        s3 = _s3_like(f)
+        f.loc[s3, "undrawn_limit"] = 0.0
+        f.loc[~s3, "years_in_stage3"] = 0.0
+        need = np.where(s3 & (f["dpd"] > 90), np.ceil((f["dpd"] - 105).clip(lower=0) / 365 * 100) / 100, 0.0)
+        f["years_in_stage3"] = np.maximum(f["years_in_stage3"], need)
+        f.loc[s3, "years_in_stage3"] = f["years_in_stage3"].where(s3).groupby(f["borrower_id"]).transform("max")[s3]
+        f.loc[s3, "watchlist"] = False
+        floor = np.select([(f["dpd"] > 60) & (f["dpd"] <= 90), ((f["dpd"] > 30) & (f["dpd"] <= 60)) | f["watchlist"]], [7, 6], default=1)
+        floor = np.where(s3, 9, floor)
+        f["rating_curr"] = np.maximum(f["rating_curr"], floor)
+        if with_optional:
+            f.loc[f["is_revolving"] & f["amortising"], "amortising"] = False
+            f.loc[~f["is_revolving"], "days_over_limit"] = 0
+            f.loc[f["collateral_decline"] & (f["secured_pct"] == 0), "collateral_decline"] = False
+            f.loc[f["dpd_rebuttal"] & ~((f["dpd"] > 30) & (f["dpd"] <= 90)), "dpd_rebuttal"] = False
+            f.loc[(f["dpd"] > 0) & (f["months_regular"] > 0), "months_regular"] = 0.0
+            f.loc[(f["prior_stage"] == 3) & ~s3 & (f["dpd"] > 0), "prior_stage"] = 2
+    return sanitize(f)
+
+
 def core_template() -> str:
     """CSV with only the 15 core columns and three sample loans."""
     rows = [dict(loan_id="LN00001", borrower_id="B1", category="Housing loan to individuals", outstanding=45.0, undrawn_limit=0.0, dpd=0,
@@ -575,6 +716,16 @@ with tab_data:
                "Years in Stage 3 only matters for Stage 3 loans.")
     if loans["loan_id"].duplicated().any():
         st.warning("Duplicate loan_id values found.")
+    viol = check_rules(loans, use_opt)
+    nbad = int(viol["Violations"].sum())
+    with st.expander(f"✅ Data consistency rules: {'all pass' if nbad == 0 else str(nbad) + ' violations'}", expanded=nbad > 0):
+        st.caption("Columns depend on each other (a loan 120 days late cannot be grade 2; a Stage 3 borrower has no undrawn limit; "
+                   "a borrower's loans share one watchlist status). Edited or uploaded data is checked against these rules.")
+        st.dataframe(viol, hide_index=True, width="stretch")
+        if nbad and st.button("Apply rule fixes to the data"):
+            st.session_state.loans = apply_rules(loans, use_opt)
+            st.session_state.ver += 1
+            st.rerun()
 
 if loans.empty:
     st.info("The loan book is empty — generate or add some loans.")
@@ -895,6 +1046,8 @@ def build_checks():
     rows = []
     def add(area, check, ok, detail):
         rows.append({"Area": area, "Check": check, "Status": "✅ Pass" if ok else "⚠️ Review", "Detail": detail})
+    add("Data", "Input data follows the consistency rules (R01-R14)", nbad == 0,
+        "All rules pass" if nbad == 0 else "; ".join(f"{a_}: {b_} loans" for a_, b_ in viol.loc[viol["Violations"] > 0, ["Rule", "Violations"]].values))
     n_dup = int(loans["loan_id"].duplicated().sum())
     add("Data", "Loan IDs are unique", n_dup == 0, f"{n_dup} duplicate IDs")
     n_zero = int((loans["outstanding"] <= 0).sum())
@@ -989,6 +1142,14 @@ The app uses rating *grades*; the PD for each grade comes from the two PD tables
 | `covenant_breach`, `collateral_decline` | False | Annex 1 qualitative triggers |
 | `dpd_rebuttal` | False | documented rebuttal of the 30-DPD presumption |
 | `prior_stage`, `months_regular`, `restructured` | stage 1, 24 months, not restructured | upgrade / probation rules, stage migration table |
+
+### Data rules (checked on every edit or upload)
+Columns depend on each other, so the generator builds them in order (borrower state, then grades and flags, then DPD, then limits and history) and the Data tab checks the same rules:
+a loan with DPD 31-60 or on the watchlist is grade 6 or worse, DPD 61-90 grade 7 or worse, and a Stage 3 borrower grade 9 or 10 ·
+a Stage 3 borrower has no undrawn limit, is not on the watchlist, and its loans share one *years in Stage 3*, which also bounds how high DPD can be (DPD ≤ 90 + days in Stage 3) ·
+watchlist and UTP flag are borrower-level, so they agree across a borrower's loans · secured % above 0 needs a collateral type ·
+(optional columns) over-limit days only on revolving facilities, no loan is both revolving and amortising, months of regular payment is 0 while past due.
+"Apply rule fixes" removes the contradiction conservatively; it never invents collateral or good news.
 
 ### Simplifications you should know about
 - **Both PDs** are lookup tables. The lifetime curve is derived from the 12-month PD unless you edit it; a real build needs default history, TTC→PIT calibration and macro links. Beyond year 10 the curve repeats its year-10 conditional PD.
