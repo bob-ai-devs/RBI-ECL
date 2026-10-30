@@ -12,6 +12,9 @@ import numpy as np
 import pandas as pd
 import altair as alt
 import streamlit as st
+from statistics import NormalDist
+import datetime
+import shap
 
 st.set_page_config(page_title="RBI ECL Model Lab", page_icon="🏦", layout="wide")
 
@@ -55,7 +58,7 @@ DEFAULT_CAT = "Other / residual"
 COLS = ["loan_id", "borrower_id", "category", "outstanding", "undrawn_limit", "is_revolving",
         "amortising", "dpd", "days_over_limit", "rating_orig", "rating_curr", "watchlist",
         "covenant_breach", "collateral_decline", "dpd_rebuttal", "credit_impaired", "years_in_stage3", "prior_stage", "restructured", "months_regular", "secured_pct", "collateral_type",
-        "remaining_term_yrs", "eir_pct"]
+        "remaining_term_yrs", "eir_pct", "iracp_provision"]
 # The 15 columns the engine really needs. Everything else is optional and takes a safe default when absent.
 CORE_COLS = ["loan_id", "borrower_id", "category", "outstanding", "undrawn_limit", "dpd", "rating_orig", "rating_curr",
              "credit_impaired", "watchlist", "years_in_stage3", "secured_pct", "collateral_type", "remaining_term_yrs", "eir_pct"]
@@ -82,6 +85,21 @@ def hazards_from_curve(curve_pct: np.ndarray, horizon: int = 40) -> np.ndarray:
     h = np.where(prev < 1, (cum - prev) / np.maximum(1 - prev, 1e-12), 1.0)
     h = np.clip(h, 0, 1)
     return np.concatenate([h, np.repeat(h[:, -1:], horizon - h.shape[1], axis=1)], axis=1)
+# ---- IRB -> ECL parameter source (TTC -> PiT, downturn -> expected LGD) ----
+PARAM_IRB = "IRB-based: TTC PD → PiT, long-run / downturn LGD"
+PARAM_SIMPLE = "Simple: grade PD tables, RBI backstop LGD"
+RHO_CLASSES = ["Corporate", "Residential mortgage", "Other retail"]
+_CORP = {"Corporate loan", "Loan to medium enterprises", "Loan to banks / NBFCs / regulated FIs", "State government exposures",
+         "Other claims secured by commercial RE", "Central-govt guaranteed (CGTMSE etc.)", "Restructured standard advances", "Other / residual"}
+_MORT = {"Housing loan to individuals", "Other claims secured by residential RE"}
+CAT_CLASS_IDX = {c: (0 if c in _CORP else 1 if c in _MORT else 2) for c in CATS}
+LGD_CLASSES = ["Secured portion", "Unsecured portion", "Cash / gold / govt sec / LIC / KVP / NSC"]
+DEFAULT_SCEN_SIMPLE = pd.DataFrame({"scenario": ["Base", "Upside", "Downside"], "weight_pct": [60.0, 20.0, 20.0],
+                                    "pd_mult": [1.0, 0.8, 1.5], "lgd_mult": [1.0, 0.95, 1.1]})
+DEFAULT_SCEN_IRB = pd.DataFrame({"scenario": ["Base", "Upside", "Downside"], "weight_pct": [60.0, 20.0, 20.0],
+                                 "z": [-0.3, 0.5, -1.3], "lgd_dt_w": [0.25, 0.0, 1.0]})
+SAMPLE_ODR = pd.DataFrame({"year": list(range(2014, 2027)),
+                           "default_rate_pct": [2.0, 3.5, 6.0, 9.0, 6.5, 4.0, 4.5, 2.5, 1.5, 0.9, 1.1, 1.8, 2.8]})   # illustrative only
 STAGE_COLORS = alt.Scale(domain=["Stage 1", "Stage 2", "Stage 3"], range=["#2e9e6b", "#f0a500", "#d64545"])
 
 
@@ -213,7 +231,10 @@ def generate_loans(n: int, seed: int, stress: float, with_optional: bool = False
     })
     if not with_optional:
         df = df[CORE_COLS]                       # optional columns are then filled with safe defaults by sanitize()
-    return sanitize(df)
+    out = sanitize(df)
+    if with_optional:                          # illustrative IRACP provisions: proxy rates with +/-10% noise
+        out["iracp_provision"] = np.round(np.minimum(iracp_proxy(out) * rng.uniform(0.9, 1.1, len(out)), out["outstanding"]), 3)
+    return out
 
 
 def sanitize(df: pd.DataFrame) -> pd.DataFrame:
@@ -221,7 +242,7 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     for c in COLS:
         if c not in d.columns:
-            d[c] = False if c in BOOL_COLS else (np.nan if c == "months_regular" else NUM_DEFAULT.get(c, ""))
+            d[c] = False if c in BOOL_COLS else (np.nan if c in ("months_regular", "iracp_provision") else NUM_DEFAULT.get(c, ""))
     d = d[COLS].reset_index(drop=True)
 
     for c in ["loan_id", "borrower_id", "category", "collateral_type"]:
@@ -251,6 +272,7 @@ def sanitize(df: pd.DataFrame) -> pd.DataFrame:
     d["years_in_stage3"] = d["years_in_stage3"].clip(lower=0)
     d["remaining_term_yrs"] = d["remaining_term_yrs"].clip(0.1, 40)
     d["eir_pct"] = d["eir_pct"].clip(0, 60)
+    d["iracp_provision"] = pd.to_numeric(d["iracp_provision"], errors="coerce").clip(lower=0)      # NaN = not provided
     d["prior_stage"] = d["prior_stage"].round().clip(1, 3).astype(int)
     d["months_regular"] = d["months_regular"].clip(lower=0)
     return d
@@ -275,6 +297,7 @@ RULES = [  # (id, rule, needs optional columns)
     ("R12", "30-DPD rebuttal only when DPD is 31-90", True),
     ("R13", "Months of regular payment is 0 while the loan is past due", True),
     ("R14", "A loan that was Stage 3 and is not any more has DPD = 0", True),
+    ("R15", "IRACP provision cannot exceed the outstanding balance", True),
 ]
 
 
@@ -303,6 +326,7 @@ def rule_masks(d: pd.DataFrame) -> dict:
         "R12": d["dpd_rebuttal"] & ~((dpd > 30) & (dpd <= 90)),
         "R13": (dpd > 0) & (d["months_regular"] > 0),
         "R14": (d["prior_stage"] == 3) & ~s3 & (dpd > 0),
+        "R15": d["iracp_provision"].notna() & (d["iracp_provision"] > d["outstanding"] + 1e-9),
     }
 
 
@@ -344,6 +368,7 @@ def apply_rules(d: pd.DataFrame, with_optional: bool) -> pd.DataFrame:
             f.loc[f["dpd_rebuttal"] & ~((f["dpd"] > 30) & (f["dpd"] <= 90)), "dpd_rebuttal"] = False
             f.loc[(f["dpd"] > 0) & (f["months_regular"] > 0), "months_regular"] = 0.0
             f.loc[(f["prior_stage"] == 3) & ~s3 & (f["dpd"] > 0), "prior_stage"] = 2
+            f["iracp_provision"] = np.minimum(f["iracp_provision"], f["outstanding"])
     return sanitize(f)
 
 
@@ -443,24 +468,84 @@ def stage_loans(d: pd.DataFrame, A: dict, grade_pd: np.ndarray, hz: np.ndarray) 
     return out
 
 
-def ecl_terms(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_pd: np.ndarray, hz: np.ndarray) -> dict:
+_ND = NormalDist()
+
+
+def _phi(x) -> np.ndarray:
+    a_ = np.asarray(x, float)
+    return np.array([_ND.cdf(v) for v in a_.ravel()]).reshape(a_.shape)
+
+
+def _phi_inv(p) -> np.ndarray:
+    a_ = np.clip(np.asarray(p, float), 1e-12, 1 - 1e-12)
+    return np.array([_ND.inv_cdf(v) for v in a_.ravel()]).reshape(a_.shape)
+
+
+def rho_table(grade_pd: np.ndarray, A: dict) -> np.ndarray:
+    """Asset correlation by exposure class (rows: Corporate, Residential mortgage, Other retail) and grade (columns)."""
+    if A.get("rho_src") == "Fixed ρ" and A.get("rho_fixed"):
+        return np.full((3, 10), float(A["rho_fixed"]))
+    p = np.maximum(grade_pd, A["pd_floor"])
+    w50 = (1 - np.exp(-50 * p)) / (1 - np.exp(-50)); w35 = (1 - np.exp(-35 * p)) / (1 - np.exp(-35))
+    return np.vstack([0.12 * w50 + 0.24 * (1 - w50), np.full(10, 0.15), 0.03 * w35 + 0.16 * (1 - w35)])
+
+
+def pit_tables(grade_pd: np.ndarray, hz: np.ndarray, rho_tbl: np.ndarray, z1: float, phi: float, floor: float) -> dict:
+    """Vasicek single-factor TTC -> PiT:  PD_PiT = Phi((Phi^-1(PD_TTC) - sqrt(rho) * Z) / sqrt(1 - rho)).
+       Z follows the scenario path z_t = z1 * phi^(t-1), reverting to 0 (the long-run average)."""
+    K = hz.shape[1]
+    zt = z1 * phi ** np.arange(K)
+    rho = np.clip(rho_tbl, 1e-6, 0.999)
+    sr, sq = np.sqrt(rho), np.sqrt(1 - rho)
+    pit12 = _phi((_phi_inv(grade_pd)[None, :] - sr * z1) / sq)                                       # (3, 10)
+    pit_h = _phi((_phi_inv(hz)[None, :, :] - sr[:, :, None] * zt[None, None, :]) / sq[:, :, None])    # (3, 10, K)
+    return dict(pit12=np.clip(np.maximum(pit12, floor), 0, 1), pit_h=np.clip(np.maximum(pit_h, floor), 0, 1))
+
+
+def irb_lgd(r: pd.DataFrame, A: dict):
+    """Long-run and downturn LGD (fractions) from the secured / unsecured / special-collateral table."""
+    sp = r["secured_pct"].to_numpy() / 100
+    spec = r["collateral_type"].to_numpy() == SPECIAL_COLL
+    lr_s = np.where(spec, A["lr"][2], A["lr"][0]); dt_s = np.where(spec, A["dt"][2], A["dt"][0])
+    return sp * lr_s + (1 - sp) * A["lr"][1], sp * dt_s + (1 - sp) * A["dt"][1]
+
+
+def ensure_scen(scen: pd.DataFrame) -> pd.DataFrame:
+    s_ = scen.copy()
+    for c, v in (("pd_mult", 1.0), ("lgd_mult", 1.0), ("z", 0.0), ("lgd_dt_w", 0.0)):
+        if c not in s_.columns:
+            s_[c] = v
+    return s_
+
+
+def ecl_terms(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_pd: np.ndarray, hz: np.ndarray,
+              z: float = 0.0, lgd_w: float = 0.0) -> dict:
     """Year-by-year building blocks (loans x years) with the TWO PDs:
        - 12-month PD  (grade table)            -> Stage 1, year 1 only
-       - lifetime PD  (term-structure curve)   -> Stage 2, every year of the remaining term"""
+       - lifetime PD  (term-structure curve)   -> Stage 2, every year of the remaining term
+       Simple mode scales them by the scenario multipliers. IRB mode reads the tables as TTC and converts them to PiT
+       with the scenario's credit-cycle index z; LGD is blended from long-run to downturn by lgd_w."""
     stage = r["stage"].to_numpy()
     T = r["remaining_term_yrs"].to_numpy()
     ead = r["ead"].to_numpy()
     g = r["rating_curr"].to_numpy() - 1
-    lgd = np.clip(r["lgd"].to_numpy() * lgd_mult, 0, 1)
     K = int(np.ceil(min(T.max(), 40)))
     t = np.arange(1, K + 1)[None, :]
     Tc = T[:, None]
     frac = np.clip(Tc - (t - 1), 0, 1)                                          # share of year t inside the term
 
-    pd12 = np.clip(np.maximum(grade_pd[g] * pd_mult, A["pd_floor"]), 0, 1)      # 12-month PD (scenario-adjusted, floored)
+    if A.get("param_mode") == PARAM_IRB:
+        cls = r["category"].map(CAT_CLASS_IDX).to_numpy(int)
+        P = pit_tables(grade_pd, hz, A["rho_tbl"], float(z), float(A["phi"]), A["pd_floor"])
+        pd12 = P["pit12"][cls, g]                                               # PiT 12-month PD
+        h = P["pit_h"][cls, g][:, :K]                                           # PiT conditional PD in each year
+        lr, dt = r["lgd_lr"].to_numpy(), r["lgd_dt"].to_numpy()
+        lgd = np.clip(lr + lgd_w * (dt - lr), 0, 1)                             # expected LGD for this scenario
+    else:
+        lgd = np.clip(r["lgd"].to_numpy() * lgd_mult, 0, 1)
+        pd12 = np.clip(np.maximum(grade_pd[g] * pd_mult, A["pd_floor"]), 0, 1)  # 12-month PD (scenario-adjusted, floored)
+        h = np.clip(np.maximum(hz[g][:, :K] * pd_mult, A["pd_floor"]), 0, 1)    # conditional PD in each year
     marg_12 = np.where(t == 1, 1 - (1 - pd12[:, None]) ** frac, 0.0)
-
-    h = np.clip(np.maximum(hz[g][:, :K] * pd_mult, A["pd_floor"]), 0, 1)        # conditional PD in each year
     surv = np.cumprod(np.concatenate([np.ones((len(r), 1)), 1 - h[:, :-1]], axis=1), axis=1)   # survival to start of year t
     marg_life = surv * (1 - (1 - h) ** frac)                                    # PD of defaulting inside year t
 
@@ -476,16 +561,21 @@ def ecl_terms(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_p
                 ead_t=ead_t, dft=dft, lgd=lgd, pd12=pd12, pd_life=marg_life.sum(axis=1))
 
 
-def scenario_ecl(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_pd: np.ndarray, hz: np.ndarray) -> np.ndarray:
-    X = ecl_terms(r, A, pd_mult, lgd_mult, grade_pd, hz)
+def ecl_from_terms(r: pd.DataFrame, X: dict) -> np.ndarray:
     ecl12 = (X["marginal"] * X["mask"] * X["lgd"][:, None] * X["ead_t"] * X["dft"]).sum(axis=1)
     ecl3 = r["ead"].to_numpy() * X["lgd"]                                        # Stage 3: PD = 100%
     return np.where(r["stage"].to_numpy() == 3, ecl3, ecl12)
 
 
+def scenario_ecl(r: pd.DataFrame, A: dict, pd_mult: float, lgd_mult: float, grade_pd: np.ndarray, hz: np.ndarray,
+                 z: float = 0.0, lgd_w: float = 0.0) -> np.ndarray:
+    return ecl_from_terms(r, ecl_terms(r, A, pd_mult, lgd_mult, grade_pd, hz, z, lgd_w))
+
+
 def run_engine(d: pd.DataFrame, A: dict, scen: pd.DataFrame, grade_pd: np.ndarray, hz: np.ndarray):
     r = stage_loans(d, A, grade_pd, hz)
     stage = r["stage"].to_numpy()
+    scen = ensure_scen(scen)
 
     # EAD (para 100): balance + CCF x undrawn; no collateral netting. Stage 3 -> drawn balance only.
     r["ead"] = np.where(stage == 3, r["outstanding"], r["outstanding"] + A["ccf"] * r["undrawn_limit"])
@@ -498,15 +588,30 @@ def run_engine(d: pd.DataFrame, A: dict, scen: pd.DataFrame, grade_pd: np.ndarra
     w = scen["weight_pct"].to_numpy(float)
     w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
     names = scen["scenario"].tolist()
-    for nm, pm, lm in zip(names, scen["pd_mult"], scen["lgd_mult"]):
-        r[f"ecl_{nm}"] = scenario_ecl(r, A, float(pm), float(lm), grade_pd, hz)
+    irb = A.get("param_mode") == PARAM_IRB
+    if irb:                                                     # long-run / downturn LGD; r["lgd"] = probability-weighted expected LGD
+        lr_, dt_ = irb_lgd(r, A)
+        r["lgd_lr"], r["lgd_dt"] = lr_, dt_
+        r["lgd"] = lr_ + float((w * scen["lgd_dt_w"].to_numpy(float)).sum()) * (dt_ - lr_)
+    else:
+        r["lgd_lr"], r["lgd_dt"] = r["lgd"], r["lgd"]
+    pd12_w = np.zeros(len(r)); life_w = np.zeros(len(r))
+    for wi, nm, pm, lm, zz, lw in zip(w, names, scen["pd_mult"], scen["lgd_mult"], scen["z"], scen["lgd_dt_w"]):
+        X = ecl_terms(r, A, float(pm), float(lm), grade_pd, hz, float(zz), float(lw))
+        r[f"ecl_{nm}"] = ecl_from_terms(r, X)
+        pd12_w += wi * X["pd12"]; life_w += wi * X["pd_life"]
     r["ecl_model"] = sum(wi * r[f"ecl_{nm}"] for wi, nm in zip(w, names))
     r["ecl_adj"] = r["ecl_model"] * (1 + A["overlay"] / 100)
 
-    # PD shown for information (base scenario, 12m, floored)
-    X0 = ecl_terms(r, A, 1.0, 1.0, grade_pd, hz)
-    r["pd12_pct"] = np.where(stage == 3, 100.0, X0["pd12"] * 100)               # 12-month PD
-    r["pd_life_pct"] = np.where(stage == 3, 100.0, X0["pd_life"] * 100)         # lifetime PD over the remaining term
+    # PD shown for information
+    r["pd12_ttc_pct"] = np.where(stage == 3, 100.0, np.maximum(grade_pd[r["rating_curr"].to_numpy() - 1], A["pd_floor"]) * 100)
+    if irb:                                                     # probability-weighted PiT PDs
+        r["pd12_pct"] = np.where(stage == 3, 100.0, pd12_w * 100)
+        r["pd_life_pct"] = np.where(stage == 3, 100.0, life_w * 100)
+    else:                                                       # neutral scenario, floored
+        X0 = ecl_terms(r, A, 1.0, 1.0, grade_pd, hz)
+        r["pd12_pct"] = np.where(stage == 3, 100.0, X0["pd12"] * 100)           # 12-month PD
+        r["pd_life_pct"] = np.where(stage == 3, 100.0, X0["pd_life"] * 100)     # lifetime PD over the remaining term
     r["pd_used_pct"] = np.where(stage == 1, r["pd12_pct"], r["pd_life_pct"])
     r["pd_type"] = np.where(stage == 1, "12-month", np.where(stage == 2, "Lifetime", "Default (100%)"))
 
@@ -618,7 +723,9 @@ def ecl_if_stage(r: pd.DataFrame, stage_val: int, A: dict, scen: pd.DataFrame, g
     x["ead"] = x["outstanding"] if stage_val == 3 else x["outstanding"] + A["ccf"] * x["undrawn_limit"]
     w = scen["weight_pct"].to_numpy(float)
     w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
-    e = sum(wi * scenario_ecl(x, A, float(pm), float(lm), grade_pd, hz) for wi, pm, lm in zip(w, scen["pd_mult"], scen["lgd_mult"]))
+    sc = ensure_scen(scen)
+    e = sum(wi * scenario_ecl(x, A, float(pm), float(lm), grade_pd, hz, float(zz), float(lw))
+            for wi, pm, lm, zz, lw in zip(w, sc["pd_mult"], sc["lgd_mult"], sc["z"], sc["lgd_dt_w"]))
     return pd.Series(e * (1 + A["overlay"] / 100), index=r.index)
 
 
@@ -646,6 +753,11 @@ def render_dashboard(Rv: pd.DataFrame, FSv: pd.DataFrame, top_n: int):
         k2[2].metric("Provision ÷ accrued interest", f"{v_prov / acc * 100:.0f}%" if acc else "–")
         k2[3].metric("Top-10 customers' share of provision", f"{top_share:.0f}%", help=f"{len(B):,} customers in this view")
 
+        if A["param_mode"] == PARAM_IRB:
+            pf_ = Rv[Rv["stage"] < 3]
+            ratio_ = float((pf_["pd12_pct"] * pf_["ead"]).sum() / max((pf_["pd12_ttc_pct"] * pf_["ead"]).sum(), 1e-12))
+            st.caption(f"Parameters: IRB-based. The probability-weighted PiT 12-month PD is **{ratio_:.2f}×** the TTC PD (1.00 = neutral cycle). "
+                       f"Details and the regulatory-EL bridge are in the IRB & TTC/PiT tab.")
         cat_tot = Rv.groupby("category")["provision"].sum().sort_values(ascending=False)
         bullets = [
             f"Coverage is **{v_prov / v_out * 100:.2f}%**. Stage 2 holds **{share(2):.1f}%** of exposure and Stage 3 **{share(3):.1f}%**, "
@@ -1001,13 +1113,27 @@ def render_sensitivity():
             w[names.index("Downside")] = max(0.0, w[names.index("Downside")] + dp); w[names.index("Base")] = max(0.0, w[names.index("Base")] - dp)
         s2["weight_pct"] = w; return s2
 
-    cases = [("PD level ×0.8 / ×1.2", ("×0.8", {}, scale_pd(0.8)), ("×1.2", {}, scale_pd(1.2))),
-             ("LGD backstop −/+10 pp", ("−10 pp", dict(lgd_sec=max(0, A["lgd_sec"] - .1), lgd_unsec=max(0, A["lgd_unsec"] - .1)), scen),
-              ("+10 pp", dict(lgd_sec=min(1, A["lgd_sec"] + .1), lgd_unsec=min(1, A["lgd_unsec"] + .1)), scen)),
-             ("Downside weight −/+10 pp", ("−10 pp", {}, shift_w(-10)), ("+10 pp", {}, shift_w(10))),
-             ("CCF 20% / 60%", ("20%", dict(ccf=.2), scen), ("60%", dict(ccf=.6), scen)),
-             ("Overlay −/+10 pp", ("−10 pp", dict(overlay=A["overlay"] - 10), scen), ("+10 pp", dict(overlay=A["overlay"] + 10), scen)),
-             ("Discounting off / on", ("off", dict(discount=False), scen), ("on", dict(discount=True), scen))]
+    def shift_z(dz):
+        s2 = scen.copy(); s2["z"] = s2["z"] + dz; return s2
+
+    def shift_lw(dl):
+        s2 = scen.copy(); s2["lgd_dt_w"] = (s2["lgd_dt_w"] + dl).clip(0, 1); return s2
+
+    common = [("Downside weight −/+10 pp", ("−10 pp", {}, shift_w(-10)), ("+10 pp", {}, shift_w(10))),
+              ("CCF 20% / 60%", ("20%", dict(ccf=.2), scen), ("60%", dict(ccf=.6), scen)),
+              ("Overlay −/+10 pp", ("−10 pp", dict(overlay=A["overlay"] - 10), scen), ("+10 pp", dict(overlay=A["overlay"] + 10), scen)),
+              ("Discounting off / on", ("off", dict(discount=False), scen), ("on", dict(discount=True), scen))]
+    if A["param_mode"] == PARAM_IRB:
+        rho0 = A["rho_tbl"]
+        cases = [("Credit cycle ±0.5σ (less / more stress)", ("less stress", {}, shift_z(0.5)), ("more stress", {}, shift_z(-0.5))),
+                 ("Downturn LGD weight −/+0.2", ("−0.2", {}, shift_lw(-0.2)), ("+0.2", {}, shift_lw(0.2))),
+                 ("Asset correlation ρ −/+0.04", ("−0.04", dict(rho_tbl=np.clip(rho0 - 0.04, 0.01, 0.5)), scen), ("+0.04", dict(rho_tbl=np.clip(rho0 + 0.04, 0.01, 0.5)), scen)),
+                 ("Mean reversion φ 0.5 / 0.9", ("φ 0.5", dict(phi=0.5), scen), ("φ 0.9", dict(phi=0.9), scen)),
+                 ("Long-run LGD −/+5 pp", ("−5 pp", dict(lr=[max(0.0, v - .05) for v in A["lr"]]), scen), ("+5 pp", dict(lr=[min(1.0, v + .05) for v in A["lr"]]), scen))] + common
+    else:
+        cases = [("PD level ×0.8 / ×1.2", ("×0.8", {}, scale_pd(0.8)), ("×1.2", {}, scale_pd(1.2))),
+                 ("LGD backstop −/+10 pp", ("−10 pp", dict(lgd_sec=max(0, A["lgd_sec"] - .1), lgd_unsec=max(0, A["lgd_unsec"] - .1)), scen),
+                  ("+10 pp", dict(lgd_sec=min(1, A["lgd_sec"] + .1), lgd_unsec=min(1, A["lgd_unsec"] + .1)), scen))] + common
     if A["use_dpd_test"]:
         cases += [("ΔPD β 2.0 / 3.5", ("β 2.0", dict(beta=2.0), scen), ("β 3.5", dict(beta=3.5), scen)),
                   ("ΔPD α 0.25 / 1.0 pp", ("α 0.25", dict(alpha_pp=.25), scen), ("α 1.0", dict(alpha_pp=1.0), scen))]
@@ -1070,6 +1196,763 @@ def render_sensitivity():
         st.caption("Orange outline = your current setting. Re-run the grid after changing data or other staging rules.")
 
 
+def _apply_cal(sugg, phi_hat, rho_c, set_rho):
+    st.session_state["scen_irb_df"] = sugg
+    st.session_state["phi_default"] = round(float(phi_hat), 2)
+    st.session_state["scen_ver"] = st.session_state.get("scen_ver", 0) + 1
+    if set_rho:
+        st.session_state["rho_src_sel"] = "Fixed ρ"
+        st.session_state["rho_fixed_in"] = round(float(rho_c), 3)
+
+
+def render_irb():
+    irb = A.get("param_mode") == PARAM_IRB
+    st.markdown("**From regulatory (IRB-type) parameters to accounting ECL.** IRB estimates are through-the-cycle (TTC), 12-month, downturn-conservative and floored. "
+                "ECL must be point-in-time (PiT), forward-looking, lifetime for Stage 2 and **unbiased** (RBI paras 47, 69-70, 72, 124). "
+                "This tab shows each conversion. The RBI text does not mention IRB itself; the conversions are standard industry practice built on those paragraphs.")
+    if not irb:
+        st.info("Select the IRB-based option under 'Parameters come from' at the top of the sidebar to apply TTC → PiT inside the ECL. "
+                "The Z-calibration tool below works in either mode.")
+    w = ensure_scen(scen)["weight_pct"].to_numpy(float); w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    sc = ensure_scen(scen)
+
+    if irb:
+        st.subheader("1 · TTC vs PiT 12-month PD by rating grade")
+        cls_name = st.radio("Exposure class (sets the asset correlation ρ)", RHO_CLASSES, horizontal=True, key="irb_cls")
+        ci = RHO_CLASSES.index(cls_name)
+        rows = [{"grade": i + 1, "view": "TTC (long-run)", "pd": max(grade_pd[i], A["pd_floor"]) * 100} for i in range(10)]
+        pit_w = np.zeros(10)
+        for wi, nm, zz in zip(w, sc["scenario"], sc["z"]):
+            P = pit_tables(grade_pd, hz, A["rho_tbl"], float(zz), float(A["phi"]), A["pd_floor"])
+            rows += [{"grade": i + 1, "view": f"PiT · {nm} (z = {zz:+.1f})", "pd": P["pit12"][ci, i] * 100} for i in range(10)]
+            pit_w += wi * P["pit12"][ci]
+        rows += [{"grade": i + 1, "view": "PiT · probability-weighted", "pd": pit_w[i] * 100} for i in range(10)]
+        dfp = pd.DataFrame(rows)
+        dom = ["TTC (long-run)"] + [v for v in dfp["view"].unique() if v.startswith("PiT ·") and "weighted" not in v] + ["PiT · probability-weighted"]
+        cols = ["#6b7a90", "#3a6ea5", "#2e9e6b", "#d64545", "#e8793a"][: len(dom) - 1] + ["#14213d"]
+        st.altair_chart(alt.Chart(dfp).mark_line(point=True).encode(
+            x=alt.X("grade:O", title="Rating grade (1 = best)"), y=alt.Y("pd:Q", scale=alt.Scale(type="log"), title="12-month PD (%, log scale)"),
+            color=alt.Color("view:N", scale=alt.Scale(domain=dom, range=cols), title=None),
+            strokeDash=alt.condition(alt.datum.view == "TTC (long-run)", alt.value([5, 4]), alt.value([1, 0])),
+            tooltip=["view", "grade", alt.Tooltip("pd:Q", format=".3f")]).properties(height=340), width="stretch")
+        perf = R[R["stage"] < 3]
+        ratio = float((perf["pd12_pct"] * perf["ead"]).sum() / max((perf["pd12_ttc_pct"] * perf["ead"]).sum(), 1e-12))
+        k = st.columns(4)
+        k[0].metric("Weighted PiT ÷ TTC (12-month PD)", f"{ratio:.2f}×", help="1.00 = neutral cycle. Above 1 = the forecast cycle is worse than the long-run average.")
+        k[1].metric("Mean reversion φ", f"{A['phi']:.2f}", help="Share of the cycle shock that persists each year (para 124)")
+        k[2].metric("Years to revert 95%", f"{np.log(0.05) / np.log(A['phi']):.1f}" if 0 < A["phi"] < 1 else "–")
+        k[3].metric("ρ range used", f"{A['rho_tbl'].min():.2f} - {A['rho_tbl'].max():.2f}")
+        with st.expander("Asset correlation ρ by exposure class and grade"):
+            st.dataframe(pd.DataFrame(A["rho_tbl"], index=RHO_CLASSES, columns=[f"grade {i}" for i in range(1, 11)]).round(3), width="stretch")
+            st.caption("Basel formulas: corporate 0.12-0.24 falling with PD, residential mortgage 0.15, other retail 0.03-0.16. SME size adjustment is not applied.")
+
+    st.subheader("2 · Credit-cycle index (Z) calibration from default history")
+    st.caption("Enter your portfolio's observed default rate by year (illustrative sample shown). The Vasicek model is inverted to get the credit-cycle index Z for each year, "
+               "an AR(1) is fitted for mean reversion, and scenario z-values are suggested.")
+    c1, c2 = st.columns([2, 1])
+    odr = c1.data_editor(SAMPLE_ODR, num_rows="dynamic", hide_index=True, key="odr_tbl", width="stretch")
+    est_rho = c2.checkbox("Estimate ρ from the data", True, key="cal_est_rho",
+                          help="Picks ρ so that the implied cycle index has unit variance, as the single-factor model assumes: ρ = s² / (1 + s²), s = std dev of Φ⁻¹(default rate).")
+    rho_in = c2.number_input("ρ (used when not estimated)", 0.01, 0.5, 0.12, 0.01, key="cal_rho", disabled=est_rho)
+    od = odr.apply(pd.to_numeric, errors="coerce").dropna()
+    od = od[(od["default_rate_pct"] > 0) & (od["default_rate_pct"] < 100)].sort_values("year")
+    if len(od) < 5:
+        st.info("Enter at least 5 years of default rates.")
+    else:
+        dr = od["default_rate_pct"].to_numpy(float) / 100
+        pd_lr = float(dr.mean())
+        s_x = float(np.std(_phi_inv(dr), ddof=1))
+        rho_c = float(np.clip(s_x ** 2 / (1 + s_x ** 2), 0.01, 0.5)) if est_rho else float(rho_in)
+        zr = (_phi_inv(pd_lr) - np.sqrt(1 - rho_c) * _phi_inv(dr)) / np.sqrt(rho_c)
+        zc = zr - zr.mean()
+        x_, y_ = zc[:-1], zc[1:]
+        phi_hat = float(np.clip((x_ * y_).sum() / max((x_ * x_).sum(), 1e-12), 0.0, 0.95))
+        resid = y_ - phi_hat * x_
+        sig = float(resid.std(ddof=1)) if len(resid) > 2 else float(zc.std())
+        z0 = float(zc[-1]); zb = phi_hat * z0
+        k = st.columns(6)
+        k[0].metric("Long-run default rate", f"{pd_lr * 100:.2f}%")
+        k[1].metric("ρ used", f"{rho_c:.3f}", help="Estimated from the data" if est_rho else "Typed in")
+        k[2].metric("Std dev of Z", f"{zc.std(ddof=1):.2f}", help="Near 1 if ρ is about right. Far above or below 1 means revisit ρ.")
+        k[3].metric("Fitted φ (AR-1)", f"{phi_hat:.2f}")
+        k[4].metric("Latest Z", f"{z0:+.2f}", help="Negative = below-average credit conditions")
+        k[5].metric("Base z for next 12 months", f"{zb:+.2f}")
+        if not est_rho and not 0.7 <= float(zc.std(ddof=1)) <= 1.4:
+            st.warning(f"Std dev of Z is {zc.std(ddof=1):.2f}: the typed ρ does not fit this history (it implies ρ ≈ {np.clip(s_x ** 2 / (1 + s_x ** 2), 0.01, 0.5):.3f}).")
+        ch = pd.DataFrame({"year": od["year"].astype(int).astype(str).to_numpy(), "default rate %": dr * 100, "Z": zc})
+        g1, g2 = st.columns(2)
+        g1.altair_chart(alt.Chart(ch).mark_bar(color="#8aa4c8").encode(
+            x=alt.X("year:O", title=None), y=alt.Y("default rate %:Q", title="Default rate (%)"), tooltip=["year", alt.Tooltip("default rate %:Q", format=".2f")]).properties(title="Observed default rate", height=240)
+            + alt.Chart(pd.DataFrame({"m": [pd_lr * 100]})).mark_rule(color="#e8793a", strokeDash=[5, 4]).encode(y=alt.Y("m:Q", title="Default rate (%)")), width="stretch")
+        g2.altair_chart(alt.Chart(ch).mark_line(point=True, color="#14213d").encode(
+            x=alt.X("year:O", title=None), y=alt.Y("Z:Q", title="Credit-cycle index Z (negative = downturn)"),
+            tooltip=["year", alt.Tooltip("Z:Q", format="+.2f")]).properties(title="Implied credit-cycle index", height=240)
+            + alt.Chart(pd.DataFrame({"z": [0.0]})).mark_rule(color="#6b7a90").encode(y=alt.Y("z:Q", title="Credit-cycle index Z (negative = downturn)")), width="stretch")
+        sugg = pd.DataFrame({"scenario": ["Base", "Upside", "Downside"], "weight_pct": [60.0, 20.0, 20.0],
+                             "z": [zb, zb + 0.84 * sig, zb - 1.28 * sig], "lgd_dt_w": [0.25, 0.0, 1.0]}).round(3)
+        st.markdown("**Suggested scenarios** (base = φ × latest Z; upside and downside at about the 80th and 10th percentile of the cycle shock)")
+        st.dataframe(sugg, hide_index=True, width="stretch")
+        gz = np.linspace(-6, 6, 241); sdc = float(np.sqrt(max(1 - phi_hat ** 2, 1e-6)))
+        wpdf = np.exp(-0.5 * ((gz - zb) / sdc) ** 2); wpdf /= wpdf.sum()
+        pit_f = lambda zz: _phi((_phi_inv(0.01) - np.sqrt(rho_c) * np.asarray(zz)) / np.sqrt(1 - rho_c))
+        exact = float((wpdf * pit_f(gz)).sum()); approx = float((np.array([0.6, 0.2, 0.2]) * pit_f(sugg["z"].to_numpy(float))).sum())
+        st.caption(f"Scenario approximation check for a grade with 1% TTC PD: exact conditional average PiT PD **{exact * 100:.3f}%** (integrated over the cycle) vs "
+                   f"**{approx * 100:.3f}%** from the 3 scenarios (ratio {approx / exact:.2f}). Three points understate the average when cycle uncertainty is wide: "
+                   "add scenarios, move weights, or document an overlay for the gap (para 131).")
+        if irb:
+            perf = R[R["stage"] < 3]
+            ttc_book = float((perf["pd12_ttc_pct"] * perf["ead"]).sum() / max(perf["ead"].sum(), 1e-12))
+            st.caption(f"Central tendency check: the book's exposure-weighted TTC 12-month PD is **{ttc_book:.2f}%** against a long-run default rate of **{pd_lr * 100:.2f}%**. "
+                       "TTC PDs should sit close to the long-run average; a large gap means the PD table needs recalibration (paras 64, 70).")
+            set_rho = st.checkbox("Also set the model's ρ (all exposure classes) to the value used here", True, key="apply_rho",
+                                  help="Keeps the scenarios and the model on the same ρ. Untick to keep the Basel formulas.")
+            st.button("Use these scenarios and φ in the model", key="apply_cal", on_click=_apply_cal, args=(sugg, phi_hat, rho_c, set_rho))
+        else:
+            st.caption("Switch to the IRB-based option to apply these.")
+
+    if not irb:
+        return
+    st.subheader("3 · Regulatory EL → ECL bridge")
+    steps = irb_bridge()
+    wr, cum = [], 0.0
+    for nm, val, tot in steps:
+        if tot:
+            wr.append({"step": nm, "start": 0.0, "end": val, "amount": val, "kind": "total"}); cum = val
+        else:
+            wr.append({"step": nm, "start": cum, "end": cum + val, "amount": val, "kind": "up" if val >= 0 else "down"}); cum += val
+    wf = pd.DataFrame(wr)
+    b_ = alt.Chart(wf).encode(x=alt.X("step:N", sort=None, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=170)))
+    bars = b_.mark_bar().encode(y=alt.Y("start:Q", title="₹ lakh"), y2="end:Q",
+                                color=alt.Color("kind:N", scale=alt.Scale(domain=["total", "up", "down"], range=["#14213d", "#e8793a", "#2e9e6b"]), legend=None),
+                                tooltip=["step", alt.Tooltip("amount:Q", format="+,.1f")])
+    st.altair_chart((bars + b_.mark_text(dy=-6).encode(y="end:Q", text=alt.Text("amount:Q", format=",.0f"))).properties(height=340), width="stretch")
+    el0, fin = steps[0][1], steps[-1][1]
+    k = st.columns(4)
+    k[0].metric("Regulatory-style 12-month EL", fmt_amt(el0))
+    k[1].metric("Final provision", fmt_amt(fin))
+    k[2].metric("Provision minus EL", fmt_amt(fin - el0), "excess" if fin >= el0 else "shortfall", delta_color="off")
+    k[3].metric("TTC → PiT effect", fmt_amt(steps[1][1]))
+    st.caption("Orange = the conversion adds provision, green = it removes provision. In an IRB capital framework a shortfall of provisions against EL is deducted from CET1 and an "
+               "excess can count in Tier 2 within limits; RBI's current framework for most banks is the Standardised Approach, so read this as analysis, not a capital calculation.")
+    st.dataframe(pd.DataFrame({"Step": [s_[0] for s_ in steps], "Amount (₹ lakh)": [s_[1] for s_ in steps],
+                               "% of final provision": [s_[1] / max(fin, 1e-9) * 100 for s_ in steps]}), hide_index=True, width="stretch",
+                 column_config={"Amount (₹ lakh)": st.column_config.NumberColumn(format="%+.1f"), "% of final provision": st.column_config.NumberColumn(format="%+.1f")})
+
+    st.subheader("4 · LGD: backstop, long-run, downturn and the expected LGD used")
+    lw_bar = float((w * sc["lgd_dt_w"].to_numpy(float)).sum())
+    lrows = []
+    for i, cl in enumerate(LGD_CLASSES):
+        bs = [A["lgd_sec"], A["lgd_unsec"], A["lgd_special"]][i]
+        cl = ["Secured portion", "Unsecured portion", "Cash / gold / govt"][i]
+        lrows += [{"class": cl, "view": "RBI backstop", "lgd": bs * 100}, {"class": cl, "view": "Long-run (IRB)", "lgd": A["lr"][i] * 100},
+                  {"class": cl, "view": "Downturn (IRB)", "lgd": A["dt"][i] * 100},
+                  {"class": cl, "view": "Expected, used in ECL", "lgd": (A["lr"][i] + lw_bar * (A["dt"][i] - A["lr"][i])) * 100}]
+    st.altair_chart(alt.Chart(pd.DataFrame(lrows)).mark_bar().encode(
+        x=alt.X("class:N", title=None, axis=alt.Axis(labelAngle=0, labelLimit=200)), xOffset="view:N", y=alt.Y("lgd:Q", title="LGD (%)"),
+        color=alt.Color("view:N", scale=alt.Scale(domain=["RBI backstop", "Long-run (IRB)", "Downturn (IRB)", "Expected, used in ECL"],
+                                                  range=["#8aa4c8", "#2e9e6b", "#d64545", "#14213d"]), title=None),
+        tooltip=["class", "view", alt.Tooltip("lgd:Q", format=".1f")]).properties(height=300), width="stretch")
+    st.caption(f"Probability-weighted downturn weight: {lw_bar:.2f}. ECL uses expected LGD (para 47: neither worst case nor best case). The RBI backstop applies only if you cannot estimate LGD reliably (para 97).")
+
+    st.subheader("5 · How the provision moves with the credit cycle")
+    zs = [-3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+    if st.button("Run cycle sweep", key="sweep_run", type="primary"):
+        res = []
+        for zz in zs:
+            s1_ = pd.DataFrame([{"scenario": "Base", "weight_pct": 100.0, "pd_mult": 1.0, "lgd_mult": 1.0, "z": zz, "lgd_dt_w": float(np.clip(-zz / 2, 0, 1))}])
+            Rz = run_engine(loans, A, s1_, grade_pd, hz)
+            pf = Rz[Rz["stage"] < 3]
+            res.append({"z": zz, "provision": float(Rz["provision"].sum()),
+                        "PiT ÷ TTC PD": float((pf["pd12_pct"] * pf["ead"]).sum() / max((pf["pd12_ttc_pct"] * pf["ead"]).sum(), 1e-12))})
+        st.session_state["sweep_res"] = pd.DataFrame(res)
+    if "sweep_res" in st.session_state:
+        sw = st.session_state["sweep_res"]
+        s_a, s_b = st.columns(2)
+        s_a.altair_chart(alt.Chart(sw).mark_line(point=True, color="#d64545").encode(
+            x=alt.X("z:Q", title="Credit-cycle index z (left = downturn)"), y=alt.Y("provision:Q", title="Total provision (₹ lakh)"),
+            tooltip=["z", alt.Tooltip("provision:Q", format=",.0f")]).properties(title="Provision vs cycle", height=280), width="stretch")
+        s_b.altair_chart(alt.Chart(sw).mark_line(point=True, color="#3a6ea5").encode(
+            x=alt.X("z:Q", title="Credit-cycle index z"), y=alt.Y("PiT ÷ TTC PD:Q"),
+            tooltip=["z", alt.Tooltip("PiT ÷ TTC PD:Q", format=".2f")]).properties(title="PiT ÷ TTC 12-month PD", height=280), width="stretch")
+        st.caption("Single scenario at each z with the downturn LGD weight rising as z falls (full downturn LGD at z ≤ −2). ECL is pro-cyclical: it rises in a downturn even for unchanged loans.")
+
+
+# ---- IRACP (existing norms) proxy, transition capital schedule, explainability helpers -------------
+IRACP_STD_DEFAULT = {"Secured retail loans (100% collateral)": 0.40, "Corporate loan": 0.40, "Loan to small & micro enterprises": 0.25,
+                     "Loan to medium enterprises": 0.25, "Farm credit (agriculture)": 0.25, "Loan to banks / NBFCs / regulated FIs": 0.40,
+                     "Loan against TD / LIC / KVP": 0.40, "Gold loan": 0.40, "State government exposures": 0.0, "Unsecured retail loans": 0.40,
+                     "Housing loan to individuals": 0.40, "Other claims secured by residential RE": 0.40,
+                     "Other claims secured by commercial RE": 1.00, "Central-govt guaranteed (CGTMSE etc.)": 0.25,
+                     "Restructured standard advances": 5.00, "Other / residual": 0.40}
+IRACP_NPA_LABELS = ["Sub-standard (up to 1 yr as NPA)", "Doubtful 1 (1-2 yrs)", "Doubtful 2 (2-3 yrs)", "Doubtful 3 (over 3 yrs)"]
+IRACP_NPA_DEFAULT = [(15.0, 25.0), (25.0, 100.0), (40.0, 100.0), (100.0, 100.0)]        # (secured %, unsecured %)
+TRANSITION_FRACTIONS = [("2027-28", 4 / 5), ("2028-29", 3 / 5), ("2029-30", 2 / 5), ("2030-31", 1 / 5), ("2031-32", 0.0)]   # para 108
+
+
+def iracp_proxy(d: pd.DataFrame, std: dict = None, npa: list = None) -> np.ndarray:
+    """Stand-in for provisions under the extant IRACP norms: standard-asset % by category, NPA % by age and security.
+       Placeholder rates: replace with your bank's actual provisions (the iracp_provision column)."""
+    std = IRACP_STD_DEFAULT if std is None else std
+    npa = IRACP_NPA_DEFAULT if npa is None else npa
+    is_npa = ((d["dpd"] > 90) | (d["is_revolving"] & (d["days_over_limit"] >= 90))).to_numpy()
+    sp = d["secured_pct"].to_numpy() / 100
+    yrs = d["years_in_stage3"].to_numpy()
+    idx = np.select([yrs < 1, yrs < 2, yrs < 3], [0, 1, 2], default=3)
+    sec = np.array([x[0] for x in npa])[idx]; uns = np.array([x[1] for x in npa])[idx]
+    npa_prov = d["outstanding"].to_numpy() * (sp * sec + (1 - sp) * uns) / 100
+    std_prov = d["outstanding"].to_numpy() * d["category"].map(std).fillna(0.40).to_numpy(float) / 100
+    return np.where(is_npa, npa_prov, std_prov)
+
+
+def transition_frame(Rr: pd.DataFrame, use_col: bool, std: dict = None, npa: list = None) -> pd.DataFrame:
+    """ECL required on the 31 Mar 2027 position vs provisions held under IRACP, loan by loan."""
+    T = Rr[["loan_id", "borrower_id", "category", "stage", "stage_label", "outstanding", "dpd", "provision", "ecl_adj", "topup"]].copy()
+    proxy = iracp_proxy(Rr, std, npa)
+    T["iracp"] = np.where(use_col & Rr["iracp_provision"].notna().to_numpy(), Rr["iracp_provision"].to_numpy(), proxy) if use_col else proxy
+    T["delta"] = T["provision"] - T["iracp"]
+    T["iracp_class"] = np.where((Rr["dpd"] > 90) | (Rr["is_revolving"] & (Rr["days_over_limit"] >= 90)), "NPA", "Standard")
+    return T
+
+
+def capital_schedule(adj_lakh: float, tax: float, opt_in: bool, cet1_cr: float = 0.0, rwa_cr: float = 0.0) -> pd.DataFrame:
+    """Phased CET1 add-back of the transitional adjustment, net of tax (para 108). Amounts in ₹ crore, static balance sheet."""
+    net = max(0.0, adj_lakh) / 100 * (1 - tax)
+    rows = []
+    for fy, f in TRANSITION_FRACTIONS:
+        add = f * net if opt_in else 0.0
+        ded = net - add
+        rows.append({"financial year": fy, "max add-back fraction": f if opt_in else 0.0, "add-back to CET1 (₹ Cr)": add, "CET1 deduction (₹ Cr)": ded,
+                     "CET1 ratio impact (bps)": (-ded / rwa_cr * 1e4) if rwa_cr > 0 else np.nan,
+                     "CET1 ratio after (%)": ((cet1_cr - ded) / rwa_cr * 100) if rwa_cr > 0 and cet1_cr > 0 else np.nan})
+    return pd.DataFrame(rows)
+
+
+def pd_worked_example(cond_pd: list, ead: float, lgd: float) -> pd.DataFrame:
+    """Conditional yearly PDs -> survival, marginal and cumulative PD and undiscounted ECL (the textbook example)."""
+    surv, rows, cum = 1.0, [], 0.0
+    for i, h in enumerate(cond_pd, 1):
+        marg = surv * h; cum += marg; surv *= 1 - h
+        rows.append({"year": i, "conditional PD": h, "survive to year-end": surv, "marginal PD": marg, "cumulative PD": cum,
+                     "ECL in year": marg * ead * lgd})
+    return pd.DataFrame(rows)
+
+
+def split_plan(start, end, outcome_m: int, val_m: int, oot_m: int) -> pd.DataFrame:
+    """Time-based development / validation / out-of-time split. The last `outcome_m` months of observation dates have no matured outcome."""
+    S, E = pd.Timestamp(start), pd.Timestamp(end)
+    latest_s = E - pd.DateOffset(months=int(outcome_m)) + pd.Timedelta(days=1)
+    oot_s = latest_s - pd.DateOffset(months=int(oot_m))
+    val_s = oot_s - pd.DateOffset(months=int(val_m))
+    segs = [("Development", S, val_s - pd.Timedelta(days=1), "Fit and calibrate the PD model"),
+            ("Validation", val_s, oot_s - pd.Timedelta(days=1), "Tune thresholds and calibration"),
+            ("Out-of-time test", oot_s, latest_s - pd.Timedelta(days=1), "Test on unseen dates; outcomes through the cut-off"),
+            ("Latest portfolio scoring", latest_s, E, "Score the current book; outcomes not yet matured")]
+    out = pd.DataFrame(segs, columns=["segment", "from", "to", "use"])
+    out["months"] = ((out["to"] - out["from"]).dt.days + 1) / 30.44
+    return out
+
+
+def provision_walk(Rs: pd.DataFrame = None) -> list:
+    """From a regulatory-style / neutral 12-month EL to the final provision, one conversion at a time, for any subset of loans."""
+    Rs = R if Rs is None else Rs
+    if Rs.empty:
+        return []
+    sc = ensure_scen(scen)
+    w = sc["weight_pct"].to_numpy(float); w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    names = list(sc["scenario"]); ib = names.index("Base") if "Base" in names else int(np.argmax(w))
+    irb = A.get("param_mode") == PARAM_IRB
+    zb, lwb = (float(sc["z"].iloc[ib]), float(sc["lgd_dt_w"].iloc[ib])) if irb else (0.0, 0.0)
+    s3 = Rs["stage"].to_numpy() == 3
+    ead = Rs["ead"].to_numpy(); g = Rs["rating_curr"].to_numpy() - 1
+    Rf = Rs.copy(); Rf["amortising"] = False
+    Af = dict(A); Af["discount"] = False; Af["amort_all"] = False
+    Xf = ecl_terms(Rf, Af, 1.0, 1.0, grade_pd, hz, zb, lwb)
+    pd_n, lgd_n = Xf["pd12"], Xf["lgd"]
+    if irb:
+        dt = Rs["lgd_dt"].to_numpy(); pd_ttc = np.maximum(grade_pd[g], A["pd_floor"])
+        e0 = float(np.where(s3, ead * dt, pd_ttc * dt * ead).sum())
+        e1 = float(np.where(s3, ead * dt, pd_n * dt * ead).sum())
+        e2 = float(np.where(s3, ead * lgd_n, pd_n * lgd_n * ead).sum())
+        steps = [("Regulatory EL (TTC PD × downturn LGD × EAD)", e0, True), ("TTC → PiT PD", e1 - e0, False), ("Downturn → expected LGD", e2 - e1, False)]
+    else:
+        e2 = float(np.where(s3, ead * lgd_n, pd_n * lgd_n * ead).sum())
+        steps = [("12-month EL (PD × LGD × EAD, neutral scenario)", e2, True)]
+    e3 = float(ecl_from_terms(Rf, Xf).sum())
+    e4 = float(ecl_from_terms(Rs, ecl_terms(Rs, A, 1.0, 1.0, grade_pd, hz, zb, lwb)).sum())
+    e5, e6, e7 = float(Rs["ecl_model"].sum()), float(Rs["ecl_adj"].sum()), float(Rs["provision"].sum())
+    return steps + [("Horizon: lifetime for Stage 2", e3 - e2, False), ("EAD profile and discounting", e4 - e3, False),
+                    ("Scenario weighting", e5 - e4, False), ("Overlay", e6 - e5, False), ("RBI floor top-up", e7 - e6, False), ("Final provision", e7, True)]
+
+
+def irb_bridge() -> list:
+    return provision_walk(R)
+
+
+def trigger_table(r: pd.Series) -> pd.DataFrame:
+    """Every staging trigger for one loan: where it stands against its threshold."""
+    rows = []
+
+    def add(name, cur, thr, active, head):
+        rows.append({"Trigger": name, "Current": cur, "Threshold": thr, "Status": "🔴 Active" if active else "🟢 Clear", "Headroom": head})
+    dpd = int(r["dpd"])
+    add("Stage 3: days past due", f"{dpd}", f"> {A['npa_dpd']}", dpd > A["npa_dpd"], "" if dpd > A["npa_dpd"] else f"{A['npa_dpd'] - dpd} days to the NPA line")
+    add("Stage 3: UTP / credit-impaired flag", "Yes" if r["credit_impaired"] else "No", "Yes", bool(r["credit_impaired"]), "")
+    add("Stage 2: DPD backstop", f"{dpd}", f"> {A['sicr_dpd']}", dpd > A["sicr_dpd"] and not r["dpd_rebuttal"],
+        "" if dpd > A["sicr_dpd"] else f"{A['sicr_dpd'] - dpd} days to the backstop")
+    if A["use_dpd_test"]:
+        ratio, diff = float(r["pd_ratio"]), float(r["pd_now_pct"] - r["pd_orig_pct"])
+        rel, ab = ratio > A["beta"], diff > A["alpha_pp"]
+        fires = {"Relative AND absolute": rel and ab, "Relative only": rel}.get(A["pd_mode"], ab)
+        add(f"Stage 2: PD now ÷ PD at origination ({A['pd_basis']})", f"×{ratio:.2f}", f"> ×{A['beta']}", rel, f"{ratio / A['beta'] * 100:.0f}% of the threshold")
+        add("Stage 2: PD increase in percentage points", f"+{diff:.2f} pp", f"> {A['alpha_pp']} pp", ab, f"{diff / max(A['alpha_pp'], 1e-9) * 100:.0f}% of the threshold")
+        add(f"Stage 2: ΔPD rule ({A['pd_mode']})", "fires" if fires else "no", "", fires, "")
+    add("Stage 2: watchlist", "Yes" if r["watchlist"] else "No", "Yes", bool(r["watchlist"]) and A["use_watch"], "")
+    if A["use_notches"]:
+        nt = int(r["rating_curr"] - r["rating_orig"])
+        add("Stage 2: rating downgrade (notches)", f"{nt}", f">= {A['notches']}", nt >= A["notches"], "")
+    if use_opt:
+        add("Stage 2: covenant breach / collateral drop", "Yes" if (r["covenant_breach"] or r["collateral_decline"]) else "No", "Yes",
+            bool(r["covenant_breach"] or r["collateral_decline"]) and A["use_qual"], "")
+        add("Stage 2: revolving over limit (days)", f"{int(r['days_over_limit'])}", f">= {A['rev_days']}", bool(r["is_revolving"]) and r["days_over_limit"] >= A["rev_days"], "")
+    return pd.DataFrame(rows)
+
+
+def explain_loan(r: pd.Series) -> list:
+    """Plain-language walk through one loan's provision."""
+    stage = int(r["stage"]); irb = A.get("param_mode") == PARAM_IRB
+    g = int(r["rating_curr"]) - 1
+    out = [f"**Stage {stage}.** {r['stage_reason']}."]
+    if stage == 3:
+        out.append(f"**PD = 100%.** Default has occurred, so the model ECL is EAD × LGD = {fmt_amt(r['ead'])} × {r['lgd'] * 100:.1f}% = {fmt_amt(r['ead'] * r['lgd'])} before scenario weighting.")
+    elif irb:
+        out.append(f"**PD.** Grade {g + 1} has a through-the-cycle 12-month PD of {r['pd12_ttc_pct']:.3f}%. After the credit-cycle adjustment (point-in-time, probability-weighted) "
+                   f"the 12-month PD is {r['pd12_pct']:.3f}% and the lifetime PD over {r['remaining_term_yrs']:.1f} years is {r['pd_life_pct']:.2f}%. "
+                   f"This loan uses the **{r['pd_type'].lower()}** PD: {r['pd_used_pct']:.3f}%.")
+    else:
+        out.append(f"**PD.** Grade {g + 1} gives a 12-month PD of {r['pd12_pct']:.3f}% and a lifetime PD of {r['pd_life_pct']:.2f}%. This loan uses the **{r['pd_type'].lower()}** PD: {r['pd_used_pct']:.3f}%.")
+    lg = (f"**LGD {r['lgd'] * 100:.1f}%** " + (f"(long-run {r['lgd_lr'] * 100:.1f}%, downturn {r['lgd_dt'] * 100:.1f}%, blended by the scenario weights) " if irb else "(RBI backstop) ")
+          + f"for {r['secured_pct']:.0f}% secured ({r['collateral_type']}).")
+    out.append(lg)
+    out.append(f"**EAD {fmt_amt(r['ead'])}** = outstanding {fmt_amt(r['outstanding'])}" + (f" + {A['ccf'] * 100:.0f}% × undrawn {fmt_amt(r['undrawn_limit'])}." if stage < 3 else " (drawn balance only in Stage 3)."))
+    out.append(f"**Model ECL {fmt_amt(r['ecl_adj'])}** ({r['ecl_adj'] / max(r['outstanding'], 1e-9) * 100:.2f}% of outstanding), discounted at the loan's EIR of {r['eir_pct']:.1f}%" + ("" if A["discount"] else " (discounting is switched off)") + ".")
+    if stage == 3:
+        out.append(f"**RBI floor:** {r['floor_pct']:.1f}% of EAD ({r['s3_bucket']} in Stage 3) = {fmt_amt(r['floor_amt'])}. " +
+                   (f"The floor binds: top-up {fmt_amt(r['topup'])}." if r["topup"] > 1e-9 else "The model ECL is above the floor."))
+    else:
+        out.append(f"**RBI floor:** {r['floor_pct']:.2f}% of EAD = {fmt_amt(r['floor_amt'])}, checked for the whole category and stage together. " +
+                   (f"This loan's share of the group top-up is {fmt_amt(r['topup'])}." if r["topup"] > 1e-9 else "The group's model ECL is above its floor."))
+    out.append(f"**Final provision {fmt_amt(r['provision'])}** ({r['provision'] / max(r['outstanding'], 1e-9) * 100:.2f}% of outstanding).")
+    return out
+
+
+def perm_importance(loans_df: pd.DataFrame, cols: list, A_: dict, scen_: pd.DataFrame, gp: np.ndarray, hz_: np.ndarray, seed: int = 0, reps: int = 2) -> pd.DataFrame:
+    """Permutation importance of the whole ECL model: shuffle one input across loans and measure how loan-level provision and stage move."""
+    base = run_engine(loans_df, A_, scen_, gp, hz_)
+    bp, bs = base["provision"].to_numpy(), base["stage"].to_numpy()
+    rng = np.random.default_rng(seed)
+    rows = []
+    for c in cols:
+        shift, chg, tot = [], [], []
+        for _ in range(reps):
+            sh = loans_df.copy(); sh[c] = rng.permutation(sh[c].to_numpy())
+            Rp = run_engine(sanitize(sh), A_, scen_, gp, hz_)
+            shift.append(float(np.abs(Rp["provision"].to_numpy() - bp).mean() / max(bp.mean(), 1e-12) * 100))
+            chg.append(float((Rp["stage"].to_numpy() != bs).mean() * 100)); tot.append(float(Rp["provision"].sum() - bp.sum()))
+        rows.append({"input": c, "provision shift %": float(np.mean(shift)), "loans changing stage %": float(np.mean(chg)), "total provision change": float(np.mean(tot))})
+    return pd.DataFrame(rows).sort_values("provision shift %", ascending=False)
+
+
+def _walk_chart(steps: list, height: int = 320, key_prefix: str = ""):
+    wr, cum = [], 0.0
+    for nm, val, tot in steps:
+        if tot:
+            wr.append({"step": nm, "start": 0.0, "end": val, "amount": val, "kind": "total"}); cum = val
+        else:
+            wr.append({"step": nm, "start": cum, "end": cum + val, "amount": val, "kind": "up" if val >= 0 else "down"}); cum += val
+    wf = pd.DataFrame(wr)
+    b_ = alt.Chart(wf).encode(x=alt.X("step:N", sort=None, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=170)))
+    bars = b_.mark_bar().encode(y=alt.Y("start:Q", title="₹ lakh"), y2="end:Q",
+                                color=alt.Color("kind:N", scale=alt.Scale(domain=["total", "up", "down"], range=["#14213d", "#e8793a", "#2e9e6b"]), legend=None),
+                                tooltip=["step", alt.Tooltip("amount:Q", format="+,.2f")])
+    st.altair_chart((bars + b_.mark_text(dy=-6).encode(y="end:Q", text=alt.Text("amount:Q", format=",.1f"))).properties(height=height), width="stretch")
+    return wf
+
+
+def render_transition():
+    st.markdown("**Transition to ECL (RBI paras 106-112).** The transitional adjustment is the excess, if any, of the ECL required on 1 April 2027, computed on the "
+                "31 March 2027 balance sheet, over the provisions held under the extant IRACP norms at 31 March 2027. It is taken against opening earnings, not the P&L (para 107). "
+                "This tab treats the loan book loaded in the app as that 31 March 2027 position.")
+    has_col = bool(use_opt and R["iracp_provision"].notna().any())
+    use_col = st.checkbox("Use the iracp_provision column from the data", True, key="tr_use_col") if has_col else False
+    if not has_col:
+        st.info("No IRACP provision column in the data, so IRACP provisions are estimated from the placeholder rates below (standard-asset % by category, NPA % by age and security). "
+                "Replace them with your bank's actual provisions: tick 'Use optional columns' and fill `iracp_provision`, or edit the rates.")
+    with st.expander("IRACP proxy rates (placeholders based on pre-2027 norms; used only when the column is missing)"):
+        c1, c2 = st.columns([3, 2])
+        std_df = c1.data_editor(pd.DataFrame({"category": CAT_NAMES, "standard-asset provision %": [IRACP_STD_DEFAULT[c] for c in CAT_NAMES]}),
+                                hide_index=True, disabled=["category"], key="tr_std", width="stretch")
+        npa_df = c2.data_editor(pd.DataFrame({"NPA age": IRACP_NPA_LABELS, "secured %": [x[0] for x in IRACP_NPA_DEFAULT], "unsecured %": [x[1] for x in IRACP_NPA_DEFAULT]}),
+                                hide_index=True, disabled=["NPA age"], key="tr_npa", width="stretch")
+    std = dict(zip(std_df["category"], pd.to_numeric(std_df["standard-asset provision %"], errors="coerce").fillna(0.40)))
+    npa = list(zip(pd.to_numeric(npa_df["secured %"], errors="coerce").fillna(0), pd.to_numeric(npa_df["unsecured %"], errors="coerce").fillna(0)))
+    T = transition_frame(R, use_col, std, npa)
+    iracp, ecl_f = float(T["iracp"].sum()), float(T["provision"].sum())
+    delta = ecl_f - iracp
+    k = st.columns(5)
+    k[0].metric("IRACP provisions (31 Mar 2027)", fmt_amt(iracp), "from the data column" if use_col else "estimated from proxy rates", delta_color="off")
+    k[1].metric("ECL required (1 Apr 2027)", fmt_amt(ecl_f), "incl. RBI floors", delta_color="off")
+    k[2].metric("Difference (ECL − IRACP)", fmt_amt(delta), "more provision" if delta > 0 else "less provision", delta_color="inverse")
+    k[3].metric("Transitional adjustment", fmt_amt(max(0.0, delta)), help="Para 107: max(0, ECL − IRACP provisions)")
+    k[4].metric("Coverage: IRACP vs ECL", f"{iracp / max(R['outstanding'].sum(), 1e-9) * 100:.2f}% → {ecl_f / max(R['outstanding'].sum(), 1e-9) * 100:.2f}%")
+    if delta <= 0:
+        st.success("ECL is at or below the IRACP provisions held. No transitional adjustment arises; the difference may be recorded directly in retained earnings (para 110).")
+
+    st.subheader("Where does the difference come from?")
+    by_stage = T.groupby("stage_label")["delta"].sum().reindex(["Stage 1", "Stage 2", "Stage 3"], fill_value=0.0)
+    steps = [("IRACP provisions", iracp, True), ("Stage 1 loans", float(by_stage["Stage 1"]), False), ("Stage 2 loans", float(by_stage["Stage 2"]), False),
+             ("Stage 3 loans", float(by_stage["Stage 3"]), False), ("ECL provision", ecl_f, True)]
+    _walk_chart(steps, 300)
+    a, b = st.columns(2)
+    with a:
+        bc = T.groupby("category").agg(IRACP=("iracp", "sum"), ECL=("provision", "sum")).reset_index().melt("category", var_name="basis", value_name="amount")
+        st.altair_chart(alt.Chart(bc).mark_bar().encode(
+            y=alt.Y("category:N", sort="-x", title=None, axis=alt.Axis(labelLimit=240)), x=alt.X("amount:Q", title="Provision (₹ lakh)"), yOffset="basis:N",
+            color=alt.Color("basis:N", scale=alt.Scale(domain=["IRACP", "ECL"], range=["#8aa4c8", "#e8793a"]), title=None),
+            tooltip=["category", "basis", alt.Tooltip("amount:Q", format=",.0f")]).properties(title="IRACP vs ECL by category", height=400), width="stretch")
+    with b:
+        T["delta_pct"] = (T["delta"] / T["outstanding"].where(T["outstanding"] > 0, 1) * 100).clip(-30, 60)
+        st.altair_chart(alt.Chart(T).mark_bar(color="#3a6ea5").encode(
+            x=alt.X("delta_pct:Q", bin=alt.Bin(maxbins=36), title="Change in provision, % of outstanding (clipped -30 to 60)"), y=alt.Y("count()", title="Loans"),
+            tooltip=[alt.Tooltip("count()", title="loans")]).properties(title="Loan-level difference (ECL − IRACP)", height=400), width="stretch")
+    st.markdown("**IRACP class × ECL stage** (loans, exposure and difference)")
+    xt = T.groupby(["iracp_class", "stage_label"]).agg(loans=("loan_id", "count"), outstanding=("outstanding", "sum"), IRACP=("iracp", "sum"),
+                                                       ECL=("provision", "sum"), difference=("delta", "sum")).reset_index()
+    st.dataframe(xt, hide_index=True, width="stretch", column_config={c_: st.column_config.NumberColumn(format="%.1f") for c_ in ["outstanding", "IRACP", "ECL", "difference"]})
+    st.caption("Standard loans that move to Stage 2 or 3, and NPAs whose ECL or floor differs from the old rates, drive most of the adjustment. "
+               "Under para 103 an account that was an NPA at 31 March 2027 stays an NPA until its irregularities are rectified, whatever the new model says.")
+    t1, t2 = st.columns(2)
+    cols_show = ["loan_id", "borrower_id", "category", "stage_label", "outstanding", "iracp", "provision", "delta"]
+    cc = {c_: st.column_config.NumberColumn(format="%.2f") for c_ in ["outstanding", "iracp", "provision", "delta"]}
+    t1.markdown("**Largest increases (loan level)**"); t1.dataframe(T.nlargest(15, "delta")[cols_show], hide_index=True, width="stretch", column_config=cc)
+    t2.markdown("**Largest decreases (loan level)**"); t2.dataframe(T.nsmallest(15, "delta")[cols_show], hide_index=True, width="stretch", column_config=cc)
+    cust = T.groupby("borrower_id").agg(category=("category", "first"), loans=("loan_id", "count"), outstanding=("outstanding", "sum"),
+                                        iracp=("iracp", "sum"), provision=("provision", "sum"), delta=("delta", "sum")).reset_index()
+    st.download_button("⬇️ Download loan-level transition comparison (CSV)", T.drop(columns=["delta_pct"], errors="ignore").to_csv(index=False), "transition_vs_iracp.csv", "text/csv", key="tr_dl")
+    st.download_button("⬇️ Download customer-level comparison (CSV)", cust.to_csv(index=False), "transition_vs_iracp_customers.csv", "text/csv", key="tr_dl2")
+
+    st.subheader("Regulatory capital: phased CET1 add-back (para 108-109)")
+    c1, c2, c3, c4 = st.columns(4)
+    opt_in = c1.checkbox("Bank opts for the transitional arrangement", True, key="tr_opt")
+    tax = c2.number_input("Tax rate applied to the adjustment (%)", 0.0, 50.0, 25.17, 0.01, key="tr_tax", help="Placeholder: the adjustment is added back net of applicable taxes. Use your bank's rate.") / 100
+    cet1 = c3.number_input("CET1 capital (₹ crore, optional)", 0.0, 1e8, 0.0, key="tr_cet1")
+    rwa = c4.number_input("Total RWA (₹ crore, optional)", 0.0, 1e9, 0.0, key="tr_rwa")
+    cs = capital_schedule(delta, tax, opt_in, cet1, rwa)
+    net_cr = max(0.0, delta) / 100 * (1 - tax)
+    st.markdown(f"Transitional adjustment **{fmt_amt(max(0.0, delta))}** = ₹{max(0.0, delta) / 100:,.2f} Cr; net of {tax * 100:.2f}% tax **₹{net_cr:,.2f} Cr**.")
+    cl = cs.melt("financial year", value_vars=["add-back to CET1 (₹ Cr)", "CET1 deduction (₹ Cr)"], var_name="part", value_name="amount")
+    st.altair_chart(alt.Chart(cl).mark_bar().encode(
+        x=alt.X("financial year:N", title=None, axis=alt.Axis(labelAngle=0)), y=alt.Y("amount:Q", title="₹ crore"),
+        color=alt.Color("part:N", scale=alt.Scale(domain=["add-back to CET1 (₹ Cr)", "CET1 deduction (₹ Cr)"], range=["#2e9e6b", "#d64545"]), title=None),
+        tooltip=["financial year", "part", alt.Tooltip("amount:Q", format=",.2f")]).properties(height=260), width="stretch")
+    st.dataframe(cs, hide_index=True, width="stretch", column_config={
+        "max add-back fraction": st.column_config.NumberColumn(format="%.2f"), "add-back to CET1 (₹ Cr)": st.column_config.NumberColumn(format="%.2f"),
+        "CET1 deduction (₹ Cr)": st.column_config.NumberColumn(format="%.2f"), "CET1 ratio impact (bps)": st.column_config.NumberColumn(format="%.1f"),
+        "CET1 ratio after (%)": st.column_config.NumberColumn(format="%.2f")})
+    st.caption("Maximum fractions 4/5, 3/5, 2/5 and 1/5 for FY2027-28 to FY2030-31, then none (para 108). The add-back flows to Tier 1 and total capital, the leverage ratio and "
+               "large exposures, but not to Tier 2 and not to reduce standardised-approach exposures or the leverage exposure measure (para 109). Static illustration: constant RWA, "
+               "no tax-asset modelling. Provisions follow ECL from FY2027-28 whether or not the arrangement is used (para 111). Para 112 disclosures: whether the arrangement is applied, and capital and leverage "
+               "ratios against fully loaded ratios.")
+
+
+def render_explain():
+    st.markdown("**Why is the provision what it is?** Pick a scope and walk from a neutral 12-month expected loss to the final provision, with a plain-language explanation, "
+                "the staging triggers and how close each one is, and a ranking of which inputs the whole model depends on.")
+    scope = st.radio("Explain", ["Loan", "Customer", "Category", "Portfolio"], horizontal=True, key="ex_scope")
+    Rs, row = R, None
+    if scope == "Loan":
+        o = R.sort_values("provision", ascending=False)
+        lab = {i: f"{r_.loan_id} · {r_.stage_label} · {fmt_amt(r_.provision)}" for i, r_ in zip(o.index, o.itertuples())}
+        sel = st.selectbox("Loan (largest provisions first, type to search)", list(lab), format_func=lambda i: lab[i], key="ex_loan")
+        Rs, row = R.loc[[sel]], R.loc[sel]
+    elif scope == "Customer":
+        B = borrower_table(R).sort_values("provision", ascending=False)
+        lab = {r_.borrower_id: f"{r_.borrower_id} · {r_.stage_label} · {fmt_amt(r_.provision)}" for r_ in B.itertuples()}
+        sel = st.selectbox("Customer", list(lab), format_func=lambda i: lab[i], key="ex_cust")
+        Rs = R[R["borrower_id"] == sel]
+    elif scope == "Category":
+        sel = st.selectbox("Category", CAT_NAMES, key="ex_cat")
+        Rs = R[R["category"] == sel]
+    if Rs.empty:
+        st.info("No loans in this scope."); return
+    st.subheader("Provision walk")
+    steps = provision_walk(Rs)
+    _walk_chart(steps, 320)
+    fin = steps[-1][1]
+    st.dataframe(pd.DataFrame({"Step": [s_[0] for s_ in steps], "Amount (₹ lakh)": [s_[1] for s_ in steps],
+                               "% of final provision": [s_[1] / max(fin, 1e-9) * 100 for s_ in steps]}), hide_index=True, width="stretch",
+                 column_config={"Amount (₹ lakh)": st.column_config.NumberColumn(format="%+.2f"), "% of final provision": st.column_config.NumberColumn(format="%+.1f")})
+    st.caption("Each step changes one thing at a time, in this order, so the amounts add up exactly to the final provision. Orange adds provision, green removes it.")
+    if row is not None:
+        left, right = st.columns([3, 2])
+        with left:
+            st.subheader("In words")
+            with st.container(border=True):
+                for line in explain_loan(row):
+                    st.markdown("- " + line)
+        with right:
+            st.subheader("Staging triggers")
+            st.dataframe(trigger_table(row), hide_index=True, width="stretch")
+        st.subheader("SHAP: feature attribution for this loan")
+        render_shap(row)
+        active = trigger_table(row)
+        act = active[active["Status"].str.contains("Active") & (active["Trigger"] != "Stage 2: ΔPD rule (" + A["pd_mode"] + ")")]
+        if int(row["stage"]) > 1 and len(act):
+            st.markdown("**What would change the stage:** " + "; ".join(f"{t_.replace('Stage 3: ', '').replace('Stage 2: ', '')} (now {c_}, needs {'below ' + th if th else 'to clear'})"
+                                                                         for t_, c_, th in zip(act["Trigger"], act["Current"], act["Threshold"])) + ". "
+                        "All active triggers must clear; a Stage 3 loan also follows its borrower.")
+        elif int(row["stage"]) == 1:
+            st.markdown("**Stage 1:** no trigger is active. The 'Headroom' column shows how close each one is.")
+
+    st.subheader("Which inputs does the model depend on?")
+    st.caption("Permutation importance: shuffle one input across all loans, re-run the whole ECL model, and see how far loan-level provisions and stages move. "
+               "Inputs near zero add little: candidates to drop for a leaner model.")
+    cols_c = ["borrower_id", "category", "outstanding", "undrawn_limit", "dpd", "rating_orig", "rating_curr", "credit_impaired", "watchlist",
+              "years_in_stage3", "secured_pct", "collateral_type", "remaining_term_yrs", "eir_pct"]
+    cols_o = ["is_revolving", "amortising", "days_over_limit", "covenant_breach", "collateral_decline", "dpd_rebuttal", "prior_stage", "restructured", "months_regular"]
+    if st.button("Run input importance", key="perm_run", type="primary"):
+        with st.spinner("Re-running the model with each input shuffled…"):
+            st.session_state["perm_res"] = perm_importance(loans, cols_c + (cols_o if use_opt else []), A, scen, grade_pd, hz)
+    if "perm_res" in st.session_state:
+        pr = st.session_state["perm_res"]
+        st.altair_chart(alt.Chart(pr).mark_bar(color="#3a6ea5").encode(
+            y=alt.Y("input:N", sort="-x", title=None), x=alt.X("provision shift %:Q", title="Mean absolute change in loan-level provision (% of average provision)"),
+            tooltip=["input", alt.Tooltip("provision shift %:Q", format=".1f"), alt.Tooltip("loans changing stage %:Q", format=".1f"),
+                     alt.Tooltip("total provision change:Q", format="+,.0f")]).properties(height=30 + 26 * len(pr)), width="stretch")
+        st.dataframe(pr, hide_index=True, width="stretch", column_config={
+            "provision shift %": st.column_config.NumberColumn(format="%.1f"), "loans changing stage %": st.column_config.NumberColumn(format="%.1f"),
+            "total provision change": st.column_config.NumberColumn(format="%+.0f")})
+        st.caption("Shuffling breaks relationships between columns, so this is a stress on the model's dependence, not a real scenario. 'borrower_id' measures the effect of grouping loans by customer.")
+
+    with st.expander("📘 Worked example: 12-month PD vs lifetime PD"):
+        e1, e2, e3, e4 = st.columns(4)
+        h1 = e1.number_input("Year 1 conditional PD (%)", 0.0, 100.0, 2.0, 0.5, key="we_h1"); h2 = e2.number_input("Year 2 conditional PD (%)", 0.0, 100.0, 3.0, 0.5, key="we_h2")
+        h3 = e3.number_input("Year 3 conditional PD (%)", 0.0, 100.0, 4.0, 0.5, key="we_h3"); lg_ = e4.number_input("LGD (%)", 0.0, 100.0, 40.0, 5.0, key="we_lgd")
+        ead_ = st.number_input("EAD (₹)", 1000.0, 1e9, 100000.0, 10000.0, key="we_ead")
+        ex = pd_worked_example([h1 / 100, h2 / 100, h3 / 100], ead_, lg_ / 100)
+        st.dataframe(ex, hide_index=True, width="stretch", column_config={
+            "conditional PD": st.column_config.NumberColumn(format="%.4f"), "survive to year-end": st.column_config.NumberColumn(format="%.4f"),
+            "marginal PD": st.column_config.NumberColumn(format="%.4f"), "cumulative PD": st.column_config.NumberColumn(format="%.4f"),
+            "ECL in year": st.column_config.NumberColumn(format="%,.0f")})
+        st.markdown(f"12-month PD **{h1:.2f}%** → 12-month ECL **₹{ex['ECL in year'].iloc[0]:,.0f}** (Stage 1). Lifetime PD **{ex['cumulative PD'].iloc[-1] * 100:.2f}%** "
+                    f"(not {h1 + h2 + h3:.0f}%: a borrower who defaults in year 1 cannot default again) → lifetime ECL **₹{ex['ECL in year'].sum():,.0f}** (Stage 2), "
+                    "undiscounted with constant EAD and LGD. The engine does the same year by year with discounting and amortisation.")
+
+
+def render_timeline():
+    st.markdown("**RBI timeline and the data you need for each date.** Three different things: the transition date, the first ECL reporting date, and the history needed to build and validate the models.")
+    ev = pd.DataFrame([("2027-03-31", "Baseline", "Closing position under existing IRACP; the transition ECL is computed on this balance sheet (para 107)"),
+                       ("2027-04-01", "Transition", "Directions in force; opening adjustment against retained earnings, not the P&L (paras 2, 19, 107)"),
+                       ("2027-06-30", "First ECL report", "ECL-based results with Annex 4 disclosures (para 150)"),
+                       ("2027-12-31", "End of parallel quarterly results", "Quarterly unaudited results under existing norms continue to this date (para 149)"),
+                       ("2028-03-31", "Comparatives", "Previous-year comparatives required from here; optional earlier (footnote 11)"),
+                       ("2030-03-31", "EIR deadline", "All loans outstanding at 31 Mar 2027 under the EIR regime (para 21)"),
+                       ("2031-03-31", "CET1 transition ends", "Last year of the phased CET1 add-back (para 108)")], columns=["date", "milestone", "what happens"])
+    ev["date"] = pd.to_datetime(ev["date"])
+    today = pd.Timestamp.today().normalize()
+    ev["days from today"] = (ev["date"] - today).dt.days
+    ch = alt.Chart(ev).encode(x=alt.X("date:T", title=None))
+    st.altair_chart((ch.mark_rule(color="#8aa4c8").encode(y=alt.value(0), y2=alt.value(60)) + ch.mark_circle(size=140, color="#e8793a").encode(y=alt.value(60), tooltip=["milestone", "what happens", alt.Tooltip("date:T")])
+                     + ch.mark_text(angle=300, align="left", dx=6, dy=-8, fontSize=11).encode(y=alt.value(52), text="milestone:N")).properties(height=190), width="stretch")
+    st.dataframe(ev.assign(date=ev["date"].dt.strftime("%d %b %Y")), hide_index=True, width="stretch")
+    st.caption("If your data stops at 31 March 2027 you can build the transition assessment, but the 30 June 2027 first-reporting result needs the June exposure and risk information: plan two snapshots.")
+
+    st.subheader("PD data split planner (time-based)")
+    st.caption("Never split monthly records at random: the same loan appears in many months, so information leaks between development and test sets. The last months of observation dates "
+               "have no matured outcome (a 12-month PD needs 12 months of follow-up), so they are scored but not tested. A practical design, not an RBI-prescribed ratio.")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    d0 = c1.date_input("Observations start", datetime.date(2020, 4, 1), key="pl_start"); d1 = c2.date_input("Data cut-off", datetime.date(2027, 3, 31), key="pl_end")
+    ho = c3.number_input("Outcome window (months)", 6, 36, 12, key="pl_h"); vm = c4.number_input("Validation (months)", 6, 24, 12, key="pl_v"); om = c5.number_input("Out-of-time test (months)", 6, 24, 12, key="pl_o")
+    plan = split_plan(d0, d1, ho, vm, om)
+    if plan["months"].iloc[0] < 12 or plan["from"].iloc[0] >= plan["to"].iloc[0]:
+        st.error("The window is too short for this split: shorten the validation or test periods, or extend the data.")
+    else:
+        if plan["months"].iloc[0] < 36:
+            st.warning(f"Development covers only {plan['months'].iloc[0]:.0f} months. A representative window should capture business-cycle variation (use the Z-calibration in the IRB tab to check).")
+        pv = plan.assign(**{"from": plan["from"].dt.strftime("%d %b %Y"), "to": plan["to"].dt.strftime("%d %b %Y"), "months": plan["months"].round(0)})
+        st.dataframe(pv, hide_index=True, width="stretch")
+        st.altair_chart(alt.Chart(plan).mark_bar(height=22).encode(
+            x=alt.X("from:T", title=None), x2="to:T", y=alt.Y("segment:N", sort=None, title=None),
+            color=alt.Color("segment:N", scale=alt.Scale(domain=list(plan["segment"]), range=["#3a6ea5", "#f0a500", "#d64545", "#8aa4c8"]), legend=None),
+            tooltip=["segment", "use", alt.Tooltip("from:T"), alt.Tooltip("to:T")]).properties(height=170), width="stretch")
+        E = pd.Timestamp(d1); S = pd.Timestamp(d0)
+        lt = pd.DataFrame([{"horizon (months)": h, "last observation date with a matured outcome": (E - pd.DateOffset(months=h)).strftime("%d %b %Y"),
+                            "usable share of the window": max(0.0, (E - pd.DateOffset(months=h) - S).days / max((E - S).days, 1)) * 100} for h in (12, 24, 36, 60)])
+        st.markdown("**Lifetime PD needs longer follow-up.** Test it separately on matured vintages at several horizons; long-tenor loans keep provisional results.")
+        st.dataframe(lt, hide_index=True, width="stretch", column_config={"usable share of the window": st.column_config.NumberColumn(format="%.0f%%")})
+    with st.expander("Data to request: five extracts"):
+        st.dataframe(pd.DataFrame([("ECL_Transition_20270331", "31 March 2027", "Transition ECL and the opening adjustment against IRACP provisions"),
+                                   ("ECL_Reporting_20270630", "30 June 2027", "First ECL reporting and Annex 4 disclosures"),
+                                   ("ECL_Historical_Performance", "Full history, monthly snapshots and dated events", "PD, LGD, EAD and back-testing"),
+                                   ("ECL_Origination_Risk", "Initial-recognition data for all historical accounts", "SICR: origination vs current risk"),
+                                   ("ECL_Macro_Scenarios", "Economic history, forecast vintages, current forecasts", "Forward-looking ECL and validation")],
+                                  columns=["extract", "as-of / coverage", "purpose"]), hide_index=True, width="stretch")
+        st.caption("Each extract needs a data dictionary, source lineage, extraction timestamp, reporting-date controls and reconciliation totals. Historical snapshots must keep what was known at each date "
+                   "(no later information in historical inputs). Planning targets, not RBI minimums: monthly snapshots 5-10 years, defaults and recoveries full history, ratings 5+ years, macro 10+ years if available.")
+
+
+def shap_feature_list(with_opt):
+    feats = [("dpd", "Days past due"), ("rating_curr", "Grade now"), ("rating_orig", "Grade at origination"),
+             ("secured_pct", "Secured %"), ("remaining_term_yrs", "Remaining term (yrs)"), ("eir_pct", "EIR %"),
+             ("watchlist", "Watchlist"), ("credit_impaired", "UTP / credit-impaired flag")]
+    if with_opt:
+        feats += [("covenant_breach", "Covenant breach"), ("collateral_decline", "Collateral value drop"), ("is_revolving", "Revolving facility")]
+    return feats
+
+
+def _predict_coverage(X, base_row, feat_cols, with_opt):
+    """Fully vectorised, pandas-free reimplementation of stage -> EAD/LGD -> ECL -> floor, returning coverage %
+       (provision / outstanding). Outstanding, undrawn limit, category and collateral type are held fixed at the
+       loan's actual values; EAD amortisation and the borrower-level / cure rules are not applied (single-loan,
+       point-in-time approximation for attribution only -- not a substitute for the full engine)."""
+    n = len(X)
+    cols = {c: X[:, j] for j, (c, _lab) in enumerate(feat_cols)}
+    g = lambda c, d: cols.get(c, np.full(n, float(d)))
+    dpd = g("dpd", base_row["dpd"])
+    rating_curr = np.clip(np.round(g("rating_curr", base_row["rating_curr"])), 1, 10).astype(int)
+    rating_orig = np.clip(np.round(g("rating_orig", base_row["rating_orig"])), 1, 10).astype(int)
+    secured_pct = np.clip(g("secured_pct", base_row["secured_pct"]), 0, 100)
+    term = np.clip(g("remaining_term_yrs", base_row["remaining_term_yrs"]), 0.1, 40)
+    eir = g("eir_pct", base_row["eir_pct"])
+    watchlist = g("watchlist", base_row["watchlist"]) > 0.5
+    utp = g("credit_impaired", base_row["credit_impaired"]) > 0.5
+    covenant = (g("covenant_breach", base_row.get("covenant_breach", False)) > 0.5) if with_opt else np.zeros(n, bool)
+    colldec = (g("collateral_decline", base_row.get("collateral_decline", False)) > 0.5) if with_opt else np.zeros(n, bool)
+    is_rev = (g("is_revolving", base_row.get("is_revolving", False)) > 0.5) if with_opt else np.full(n, bool(base_row.get("is_revolving", False)))
+
+    outstanding = float(base_row["outstanding"]); undrawn = float(base_row.get("undrawn_limit", 0.0))
+    days_over = float(base_row.get("days_over_limit", 0.0)); dpd_rebuttal = bool(base_row.get("dpd_rebuttal", False))
+    cat = base_row["category"]; coll_type = base_row["collateral_type"]; yrs3 = float(base_row["years_in_stage3"])
+    cls_idx = CAT_CLASS_IDX[cat]; tbl = CATS[cat]["tbl"]; s1f, s2f = CATS[cat]["s1"], CATS[cat]["s2"]
+    spec = coll_type == SPECIAL_COLL
+
+    npa_dpd = dpd > A["npa_dpd"]
+    out_of_order = is_rev & (days_over >= A["npa_dpd"])
+    is3 = npa_dpd | out_of_order | utp
+    late = dpd > A["sicr_dpd"]
+    t_dpd = late & (not dpd_rebuttal)
+    t_rev = is_rev & (days_over >= A["rev_days"])
+    g_o, g_c = rating_orig - 1, rating_curr - 1
+    if A["pd_basis"] == "12-month PD":
+        p_o = np.maximum(grade_pd[g_o], A["pd_floor"]); p_c = np.maximum(grade_pd[g_c], A["pd_floor"])
+    else:
+        p_o = cum_pd(g_o, term, hz, A["pd_floor"]); p_c = cum_pd(g_c, term, hz, A["pd_floor"])
+    ratio = p_c / np.maximum(p_o, 1e-12); rel = ratio > A["beta"]; ab = (p_c - p_o) * 100 > A["alpha_pp"]
+    t_pd = (np.select([A["pd_mode"] == "Relative AND absolute", A["pd_mode"] == "Relative only"], [rel & ab, rel], default=ab)
+            if A["use_dpd_test"] else np.zeros(n, bool))
+    t_down = (rating_curr - rating_orig >= A["notches"]) if A["use_notches"] else np.zeros(n, bool)
+    t_watch = watchlist if A["use_watch"] else np.zeros(n, bool)
+    t_qual = (covenant | colldec) if A["use_qual"] else np.zeros(n, bool)
+    is2 = ~is3 & (t_dpd | t_rev | t_pd | t_down | t_watch | t_qual)
+    stage = np.where(is3, 3, np.where(is2, 2, 1))
+
+    ead = np.where(stage == 3, outstanding, outstanding + A["ccf"] * undrawn)
+    sp = secured_pct / 100
+    if A.get("param_mode") == PARAM_IRB:
+        lr_s = np.where(spec, A["lr"][2], A["lr"][0]); dt_s = np.where(spec, A["dt"][2], A["dt"][0])
+        lr = sp * lr_s + (1 - sp) * A["lr"][1]; dt = sp * dt_s + (1 - sp) * A["dt"][1]
+        sc = ensure_scen(scen); w = sc["weight_pct"].to_numpy(float); w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+        lgd = lr + float((w * sc["lgd_dt_w"].to_numpy(float)).sum()) * (dt - lr)
+    else:
+        sec_l = np.where(spec, A["lgd_special"], A["lgd_sec"])
+        lgd = sp * sec_l + (1 - sp) * A["lgd_unsec"]
+
+    sc = ensure_scen(scen); w = sc["weight_pct"].to_numpy(float); w = w / w.sum() if w.sum() > 0 else np.ones(len(w)) / len(w)
+    Kc = int(np.ceil(min(term.max(), 40))); t_ = np.arange(1, Kc + 1)[None, :]
+    frac = np.clip(term[:, None] - (t_ - 1), 0, 1)
+    ecl_tot = np.zeros(n)
+    for wi, pm, lm, zz, lw in zip(w, sc["pd_mult"], sc["lgd_mult"], sc["z"], sc["lgd_dt_w"]):
+        if A.get("param_mode") == PARAM_IRB:
+            rho_row = A["rho_tbl"][cls_idx]
+            pit12 = _phi((_phi_inv(np.maximum(grade_pd[g_c], A["pd_floor"])) - np.sqrt(rho_row[g_c]) * zz) / np.sqrt(1 - rho_row[g_c]))
+            pd12 = np.clip(np.maximum(pit12, A["pd_floor"]), 0, 1)
+            tt = np.arange(Kc); ztpath = zz * A["phi"] ** tt
+            rho_b = rho_row[g_c][:, None]
+            h_pit = _phi((_phi_inv(hz[g_c][:, :Kc]) - np.sqrt(rho_b) * ztpath[None, :]) / np.sqrt(1 - rho_b))
+            h = np.clip(np.maximum(h_pit, A["pd_floor"]), 0, 1)
+        else:
+            pd12 = np.clip(np.maximum(grade_pd[g_c] * pm, A["pd_floor"]), 0, 1)
+            h = np.clip(np.maximum(hz[g_c][:, :Kc] * pm, A["pd_floor"]), 0, 1)
+        marg12 = np.where(t_ == 1, 1 - (1 - pd12[:, None]) ** frac, 0.0)
+        surv = np.cumprod(np.concatenate([np.ones((n, 1)), 1 - h[:, :-1]], axis=1), axis=1)
+        marglife = surv * (1 - (1 - h) ** frac)
+        marginal = np.where(stage[:, None] == 1, marg12, marglife)
+        mask = np.where(stage[:, None] == 1, (t_ == 1), True)
+        dft = (1 + eir[:, None] / 100) ** (-((t_ - 1) + frac / 2)) if A["discount"] else np.ones_like(frac)
+        ecl12 = (marginal * mask * lgd[:, None] * ead[:, None] * dft).sum(axis=1)
+        ecl = np.where(stage == 3, ead * lgd, ecl12)
+        ecl_tot += wi * ecl
+    ecl_adj = ecl_tot * (1 + A["overlay"] / 100)
+    idx3 = 0 if yrs3 < 1 else 1 if yrs3 < 2 else 2 if yrs3 < 3 else 3 if yrs3 < 4 else 4
+    sec_r, uns_r = S3_TABLES[tbl][idx3]
+    pct3 = sp * sec_r + (1 - sp) * uns_r
+    floor_pct = np.where(stage == 3, pct3, np.where(stage == 2, s2f, s1f))
+    prov = np.maximum(ecl_adj, ead * floor_pct / 100)
+    return prov / max(outstanding, 1e-9) * 100
+def _shap_instance_vec(row: pd.Series, feat_cols: list) -> np.ndarray:
+    return np.array([[float(row[c]) if c not in ("watchlist", "credit_impaired", "covenant_breach", "collateral_decline", "is_revolving")
+                      else float(bool(row[c])) for c, _lab in feat_cols]])
+
+
+def render_shap(row: pd.Series):
+    import shap
+    st.markdown("**SHAP (SHapley Additive exPlanations):** a game-theory feature attribution. It treats the model as a black box, perturbs each "
+                "input in turn across many coalitions, and splits the gap between the loan book's *average* coverage and *this loan's* coverage "
+                "fairly across the inputs. Positive = pushes coverage up; negative = pushes it down. Unlike the trigger table, SHAP also credits "
+                "inputs that matter even when no RBI trigger fires, such as a thin or fat margin on a threshold.")
+    feat_cols = shap_feature_list(use_opt)
+    bg_n = st.slider("Background sample size", 15, 100, 40, 5, key=f"shap_bg_{row['loan_id']}")
+    if st.button("Run SHAP explanation", key=f"shap_run_{row['loan_id']}", type="primary"):
+        with st.spinner("Computing Shapley values…"):
+            rng = np.random.default_rng(0)
+            bg_idx = rng.choice(len(loans), size=min(bg_n, len(loans)), replace=False)
+            bg = np.vstack([_shap_instance_vec(loans.iloc[i], feat_cols) for i in bg_idx])
+            inst = _shap_instance_vec(row, feat_cols)
+            predict = lambda X: _predict_coverage(X, row, feat_cols, use_opt)
+            expl = shap.KernelExplainer(predict, bg)
+            sv = np.array(expl.shap_values(inst, nsamples=512, silent=True)).ravel()
+            st.session_state[f"shap_res_{row['loan_id']}"] = (sv, float(expl.expected_value), float(predict(inst)[0]), inst.ravel(), feat_cols)
+    key = f"shap_res_{row['loan_id']}"
+    if key not in st.session_state:
+        return
+    sv, base, fx, xv, fcols = st.session_state[key]
+    actual = row["provision"] / max(row["outstanding"], 1e-9) * 100
+    k = st.columns(4)
+    k[0].metric("Portfolio average coverage (SHAP base value)", f"{base:.2f}%")
+    k[1].metric("This loan, single-loan approximation", f"{fx:.2f}%", f"{fx - base:+.2f} pp vs average", delta_color="off")
+    k[2].metric("This loan, actual engine provision", f"{actual:.2f}%", help="From the full pooled engine (Account-level ECL tab)")
+    k[3].metric("Approximation gap", f"{fx - actual:+.2f} pp", help="See caveats below")
+    order = np.argsort(-np.abs(sv))
+    labels = [fcols[i][1] for i in order]; vals = sv[order]
+    wf, cum = [], base
+    wf.append({"step": "Average coverage", "start": 0.0, "end": base, "amount": base, "kind": "total"})
+    for lab, v in zip(labels, vals):
+        wf.append({"step": lab, "start": cum, "end": cum + v, "amount": v, "kind": "up" if v >= 0 else "down"}); cum += v
+    wf.append({"step": "This loan (SHAP)", "start": 0.0, "end": cum, "amount": cum, "kind": "total"})
+    wfd = pd.DataFrame(wf)
+    b_ = alt.Chart(wfd).encode(x=alt.X("step:N", sort=None, title=None, axis=alt.Axis(labelAngle=-35, labelLimit=160)))
+    bars = b_.mark_bar().encode(y=alt.Y("start:Q", title="Coverage (%)"), y2="end:Q",
+                                color=alt.Color("kind:N", scale=alt.Scale(domain=["total", "up", "down"], range=["#14213d", "#e8793a", "#2e9e6b"]), legend=None),
+                                tooltip=["step", alt.Tooltip("amount:Q", format="+.3f")])
+    st.altair_chart((bars + b_.mark_text(dy=-6).encode(y="end:Q", text=alt.Text("amount:Q", format="+.2f"))).properties(height=340), width="stretch")
+    tbl = pd.DataFrame({"Input": labels, "Value for this loan": [xv[fcols.index((c, lab))] for lab, (c, lbl) in zip(labels, [(fcols[i][0], fcols[i][1]) for i in order])],
+                        "SHAP value (pp of coverage)": vals})
+    st.dataframe(tbl, hide_index=True, width="stretch", column_config={"SHAP value (pp of coverage)": st.column_config.NumberColumn(format="%+.3f")})
+    st.caption("**Approximation, not the exact engine number:** this explains *coverage %* (provision ÷ outstanding) for the loan held in isolation — "
+               "outstanding, undrawn limit, category and collateral type are fixed at their actual values; EAD amortisation and the Stage-3/probation "
+               "cure rules are not applied; and the RBI floor is checked for this loan alone rather than pooled with its category-stage group (para 90). "
+               "Use it to see which inputs drive the number, not to recompute the exact provision — for that, use the Account-level ECL and Loan explorer tabs.")
+
+
 # ----------------------------------------------------------------------------
 # 4. STATE + SIDEBAR
 # ----------------------------------------------------------------------------
@@ -1079,6 +1962,9 @@ if "loans" not in st.session_state:
 
 st.sidebar.title("🏦 ECL Model Lab")
 st.sidebar.caption("RBI ECL Directions 2026 · amounts in ₹ lakh")
+PARAM_MODE = st.sidebar.radio("Parameters come from", [PARAM_IRB, PARAM_SIMPLE], key="param_mode_sel",
+                              help="IRB-based: the PD tables are through-the-cycle; each scenario's credit-cycle index converts them to point-in-time, and LGD blends "
+                                   "long-run and downturn estimates. Simple: grade PDs scaled by multipliers and RBI's backstop LGD.")
 
 with st.sidebar.expander("🎲 Random data generator", expanded=True):
     use_opt = st.checkbox("Use optional columns", False,
@@ -1107,7 +1993,7 @@ with st.sidebar.expander("🎲 Random data generator", expanded=True):
         getattr(st, st.session_state.upload_msg[0])(st.session_state.upload_msg[1])
     st.download_button("⬇️ CSV template (15 core columns)", core_template(), "ecl_core_template.csv", "text/csv", width="stretch")
 
-A = {}
+A = {"param_mode": PARAM_MODE}
 with st.sidebar.expander("1 · Staging rules (para 25-38, 76-81)"):
     st.caption("Gate 1 · Stage 3")
     A["npa_dpd"] = st.number_input("NPA when DPD >", 30, 365, 90, help="Para 8: overdue for MORE than 90 days")
@@ -1139,9 +2025,13 @@ with st.sidebar.expander("1 · Staging rules (para 25-38, 76-81)"):
 
 with st.sidebar.expander("2 · PD, LGD, EAD (para 96-100)"):
     A["pd_floor"] = st.number_input("12m PD floor (%)", 0.0, 5.0, 0.03, 0.01, format="%.2f") / 100
-    A["lgd_sec"] = st.number_input("LGD - secured portion (%)", 0.0, 100.0, 65.0) / 100
-    A["lgd_unsec"] = st.number_input("LGD - unsecured portion (%)", 0.0, 100.0, 70.0) / 100
-    A["lgd_special"] = st.number_input("LGD - cash/gold/govt sec/LIC/KVP/NSC (%)", 0.0, 100.0, 30.0) / 100
+    if PARAM_MODE == PARAM_SIMPLE:
+        A["lgd_sec"] = st.number_input("LGD - secured portion (%)", 0.0, 100.0, 65.0) / 100
+        A["lgd_unsec"] = st.number_input("LGD - unsecured portion (%)", 0.0, 100.0, 70.0) / 100
+        A["lgd_special"] = st.number_input("LGD - cash/gold/govt sec/LIC/KVP/NSC (%)", 0.0, 100.0, 30.0) / 100
+    else:
+        A["lgd_sec"], A["lgd_unsec"], A["lgd_special"] = 0.65, 0.70, 0.30      # RBI backstop, shown for comparison only
+        st.caption("LGD comes from the long-run / downturn table in 2b. The RBI backstop is shown for comparison only.")
     A["ccf"] = st.number_input("CCF on undrawn limits (%)", 0.0, 100.0, 40.0,
                                help="Placeholder: take the value from the Standardised Approach Directions") / 100
     A["amort_all"] = False if use_opt else st.checkbox("Amortise EAD linearly over the remaining term", False,
@@ -1162,12 +2052,35 @@ with st.sidebar.expander("2 · PD, LGD, EAD (para 96-100)"):
         ts = st.data_editor(base_curve.round(4), hide_index=True, disabled=["grade"], key="ts_edit", width="stretch")
         ts = ts.apply(pd.to_numeric, errors="coerce").fillna(0)
 
+with st.sidebar.expander("2b · IRB → ECL conversion (TTC → PiT)"):
+    if PARAM_MODE == PARAM_IRB:
+        st.caption("Tables ① and ② are read as through-the-cycle (TTC). Each scenario's credit-cycle index z (expander 3) turns them into point-in-time (PiT) PDs.")
+        A["rho_src"] = st.selectbox("Asset correlation ρ", ["Basel formulas by exposure class", "Fixed ρ"], key="rho_src_sel")
+        A["rho_fixed"] = st.number_input("Fixed ρ", 0.01, 0.5, 0.12, 0.01, key="rho_fixed_in") if A["rho_src"] == "Fixed ρ" else None
+        A["phi"] = st.number_input("Mean reversion φ of the credit cycle", 0.0, 0.99, float(st.session_state.get("phi_default", 0.70)), 0.05,
+                                   key=f"phi_{st.session_state.get('scen_ver', 0)}",
+                                   help="The cycle shock decays by φ each year back to the long-run average. Years to revert are shown in the IRB tab (para 124).")
+        st.caption("Long-run and downturn LGD (%), blended by each scenario's downturn weight")
+        lgd_irb = st.data_editor(pd.DataFrame({"collateral class": LGD_CLASSES, "long-run %": [35.0, 50.0, 10.0], "downturn %": [45.0, 60.0, 15.0]}),
+                                 hide_index=True, disabled=["collateral class"], key="lgd_irb", width="stretch")
+        A["lr"] = (pd.to_numeric(lgd_irb["long-run %"], errors="coerce").fillna(0).clip(0, 100) / 100).tolist()
+        A["dt"] = (pd.to_numeric(lgd_irb["downturn %"], errors="coerce").fillna(0).clip(0, 100) / 100).tolist()
+    else:
+        A.update(rho_src="Basel formulas by exposure class", rho_fixed=None, phi=0.70, lr=[0.35, 0.50, 0.10], dt=[0.45, 0.60, 0.15])
+        st.caption("Select the IRB-based option at the top of the sidebar to use these.")
+
 with st.sidebar.expander("3 · Scenarios, discounting, overlay (para 47-54)"):
-    st.caption("Probability-weighted scenarios")
-    scen = st.data_editor(pd.DataFrame({"scenario": ["Base", "Upside", "Downside"],
-                                        "weight_pct": [60.0, 20.0, 20.0],
-                                        "pd_mult": [1.0, 0.8, 1.5], "lgd_mult": [1.0, 0.95, 1.1]}),
-                          hide_index=True, disabled=["scenario"], key="scen", width="stretch")
+    sv = st.session_state.get("scen_ver", 0)
+    if PARAM_MODE == PARAM_IRB:
+        st.caption("Credit-cycle scenarios. z = cycle index for the next 12 months (0 = long-run average, negative = downturn). "
+                   "Downturn weight = share of the gap from long-run to downturn LGD.")
+        scen = st.data_editor(st.session_state.get("scen_irb_df", DEFAULT_SCEN_IRB), hide_index=True, disabled=["scenario"],
+                              key=f"scen_irb_{sv}", width="stretch")
+        scen = scen.copy(); scen["pd_mult"] = 1.0; scen["lgd_mult"] = 1.0
+    else:
+        st.caption("Probability-weighted scenarios")
+        scen = st.data_editor(DEFAULT_SCEN_SIMPLE, hide_index=True, disabled=["scenario"], key="scen", width="stretch")
+        scen = scen.copy(); scen["z"] = 0.0; scen["lgd_dt_w"] = 0.0
     if abs(scen["weight_pct"].sum() - 100) > 0.01:
         st.warning(f"Weights sum to {scen['weight_pct'].sum():.1f}% — they will be normalised.")
     A["discount"] = st.checkbox("Discount at loan EIR", True)
@@ -1177,15 +2090,17 @@ with st.sidebar.expander("3 · Scenarios, discounting, overlay (para 47-54)"):
 grade_pd = np.array(pd_tbl.sort_values("grade")["pd_pct"].clip(0, 100), float) / 100          # ① 12-month PD
 ts_used = ts.sort_values("grade").reset_index(drop=True)
 hz = hazards_from_curve(ts_used[[f"y{t}" for t in YRS]].to_numpy(float))                      # ② lifetime PD curve
+A["rho_tbl"] = rho_table(grade_pd, A)                                                          # asset correlation (IRB mode)
 
 # ----------------------------------------------------------------------------
 # 5. LAYOUT
 # ----------------------------------------------------------------------------
 st.title("RBI ECL Model Lab")
 st.caption("Edit the data or the assumptions — staging, ECL, floors and the dashboard recompute instantly.")
-tab_dash, tab_data, tab_cust, tab_calc, tab_exp, tab_ew, tab_sens, tab_floor, tab_rep, tab_audit, tab_guide = st.tabs(
+tab_dash, tab_data, tab_cust, tab_calc, tab_exp, tab_ew, tab_sens, tab_irb, tab_trans, tab_expl, tab_time, tab_floor, tab_rep, tab_audit, tab_guide = st.tabs(
     ["📊 Dashboard", "🗂️ Data (editable)", "👤 Customer explorer", "🧮 Account-level ECL", "🔍 Loan explorer", "🚨 Early warning",
-     "🎛️ Sensitivity & calibration", "🧱 Prudential floors", "📑 Annex-4 style tables", "🕵️ Audit checks", "📖 Guide & limits"])
+     "🎛️ Sensitivity & calibration", "🏛️ IRB & TTC/PiT", "🔁 Transition vs IRACP", "🧭 Explainability", "🗓️ Timeline & data plan",
+     "🧱 Prudential floors", "📑 Annex-4 style tables", "🕵️ Audit checks", "📖 Guide & limits"])
 
 # ---- Data tab (rendered first: its output feeds everything) ------------------
 with tab_data:
@@ -1210,6 +2125,7 @@ with tab_data:
             "covenant_breach": st.column_config.CheckboxColumn("Covenant breach / waiver"),
             "collateral_decline": st.column_config.CheckboxColumn("Collateral value drop"),
             "dpd_rebuttal": st.column_config.CheckboxColumn("30-DPD rebutted (documented)"),
+            "iracp_provision": st.column_config.NumberColumn("IRACP provision at 31 Mar 2027 (₹ L)", min_value=0, format="%.2f"),
             "credit_impaired": st.column_config.CheckboxColumn("UTP / credit-impaired flag"),
             "prior_stage": st.column_config.NumberColumn("Stage at last reporting date", min_value=1, max_value=3, step=1),
             "restructured": st.column_config.CheckboxColumn("Restructured"),
@@ -1335,9 +2251,10 @@ with tab_rep:
 
     st.subheader("C. Assumptions snapshot (Annex 4 Tables 4-6 style)")
     st.dataframe(pd.DataFrame({
-        "Item": ["Stage 3 trigger", "PD approach", "SICR - DPD backstop", "SICR - revolving", "SICR - PD vs origination", "SICR - rating downgrade", "SICR - watchlist",
+        "Item": ["Parameter source", "Stage 3 trigger", "PD approach", "SICR - DPD backstop", "SICR - revolving", "SICR - PD vs origination", "SICR - rating downgrade", "SICR - watchlist",
                  "12m PD floor", "LGD secured / unsecured / special", "CCF", "Discounting", "Overlay", "Upgrade rules"],
-        "Value": [f"DPD > {A['npa_dpd']} / out of order / flag / borrower-level",
+        "Value": [(A["param_mode"] + (f" · φ={A['phi']:.2f}, ρ: {A['rho_src']}" if A["param_mode"] == PARAM_IRB else "")),
+                  f"DPD > {A['npa_dpd']} / out of order / flag / borrower-level",
                   "12-month PD (Stage 1) · lifetime PD curve (Stage 2) · 100% (Stage 3)", f"DPD > {A['sicr_dpd']}",
                   f"days over limit ≥ {A['rev_days']}",
                   (f"{A['pd_basis']}: {A['pd_mode']}, β={A['beta']}, α={A['alpha_pp']} pp" if A["use_dpd_test"] else "off"),
@@ -1359,7 +2276,7 @@ with tab_exp:
     sc_names = scen["scenario"].tolist()
     sc_pick = st.selectbox("Scenario", sc_names)
     sc_row = scen[scen["scenario"] == sc_pick].iloc[0]
-    X = ecl_terms(row, A, float(sc_row["pd_mult"]), float(sc_row["lgd_mult"]), grade_pd, hz)
+    X = ecl_terms(row, A, float(sc_row["pd_mult"]), float(sc_row["lgd_mult"]), grade_pd, hz, float(sc_row["z"]), float(sc_row["lgd_dt_w"]))
     r0 = row.iloc[0]
     s3 = r0["stage"] == 3
     m = st.columns(6)
@@ -1369,6 +2286,10 @@ with tab_exp:
     m[3].metric("Lifetime PD", "100%" if s3 else f"{X['pd_life'][0] * 100:.2f}%", help="Over the remaining term; used for Stage 2")
     m[4].metric("LGD", f"{X['lgd'][0] * 100:.1f}%")
     m[5].metric("Discount at EIR", f"{r0['eir_pct']:.1f}%" if A["discount"] else "off")
+    if A["param_mode"] == PARAM_IRB and not s3:
+        st.caption(f"IRB view: grade {int(r0['rating_curr'])} has a TTC 12-month PD of {max(grade_pd[int(r0['rating_curr']) - 1], A['pd_floor']) * 100:.3f}%; "
+                   f"in this scenario (z = {float(sc_row['z']):+.1f}) the PiT PD is {X['pd12'][0] * 100:.3f}% and the expected LGD {X['lgd'][0] * 100:.1f}% "
+                   f"(long-run {r0['lgd_lr'] * 100:.1f}%, downturn {r0['lgd_dt'] * 100:.1f}%).")
     if r0["stage"] == 3:
         st.info(f"Stage 3: default is treated as certain (PD = 100%), so ECL = EAD × LGD = {fmt_amt(r0['ead'] * X['lgd'][0])}. "
                 f"The floor is then {r0['floor_pct']:.1f}% of EAD ({r0['s3_bucket']} in Stage 3).")
@@ -1465,6 +2386,21 @@ def build_checks():
     add("Staging", "Stage 2 share is plausible (< 35%)", s2 < 35, f"{s2:.1f}% of exposure")
     w = float(scen["weight_pct"].sum())
     add("Parameters", "Scenario weights sum to 100%", abs(w - 100) < 0.01, f"{w:.1f}%")
+    if A["param_mode"] == PARAM_IRB:
+        sc_ = ensure_scen(scen); ww = sc_["weight_pct"].to_numpy(float); ww = ww / ww.sum() if ww.sum() > 0 else ww
+        lw_bar = float((ww * sc_["lgd_dt_w"].to_numpy(float)).sum())
+        add("IRB → ECL", "Probability-weighted downturn LGD weight is at most 0.5 (unbiased, para 47)", lw_bar <= 0.5,
+            f"{lw_bar:.2f}: ECL should use expected LGD, not downturn LGD")
+        add("IRB → ECL", "Downturn LGD is at least long-run LGD in every collateral class",
+            bool(np.all(np.array(A["dt"]) >= np.array(A["lr"]) - 1e-9)), "Check table 2b")
+        pf_ = R[R["stage"] < 3]
+        ratio_ = float((pf_["pd12_pct"] * pf_["ead"]).sum() / max((pf_["pd12_ttc_pct"] * pf_["ead"]).sum(), 1e-12))
+        add("IRB → ECL", "Weighted PiT PD stays within 0.7× to 1.5× of TTC PD (central tendency)", 0.7 <= ratio_ <= 1.5,
+            f"{ratio_:.2f}×. Scenario z-values and weights should average back to roughly the long-run level")
+        zs_ = sc_["z"].to_numpy(float)
+        add("IRB → ECL", "Scenario z-values are ordered: upside above base above downside",
+            bool(len(zs_) == 3 and zs_[1] > zs_[0] > zs_[2]), "z: " + ", ".join(f"{v:+.2f}" for v in zs_))
+        add("IRB → ECL", "Mean reversion φ is below 1 (the cycle reverts, para 124)", A["phi"] < 1, f"φ = {A['phi']:.2f}")
     cum = ts_used[[f"y{t}" for t in YRS]].to_numpy(float)
     add("Parameters", "Lifetime curve year 1 equals the 12-month PD", bool(np.allclose(cum[:, 0], grade_pd * 100, atol=0.01)),
         "Stage 1 and Stage 2 should agree on year 1")
@@ -1510,6 +2446,14 @@ with tab_ew:
     render_early_warning()
 with tab_sens:
     render_sensitivity()
+with tab_irb:
+    render_irb()
+with tab_trans:
+    render_transition()
+with tab_expl:
+    render_explain()
+with tab_time:
+    render_timeline()
 
 # ---- Guide ----------------------------------------------------------------------
 with tab_guide:
@@ -1540,6 +2484,30 @@ The app uses rating *grades*; the PD for each grade comes from the two PD tables
 | `covenant_breach`, `collateral_decline` | False | Annex 1 qualitative triggers |
 | `dpd_rebuttal` | False | documented rebuttal of the 30-DPD presumption |
 | `prior_stage`, `months_regular`, `restructured` | stage 1, 24 months, not restructured | upgrade / probation rules, stage migration table |
+
+### From IRB parameters to ECL (TTC vs PiT)
+IRB-type estimates are built for capital: **TTC** PD (long-run average), **downturn** LGD, floors and a margin of conservatism. ECL must be **unbiased** and forward-looking (RBI paras 47, 69-70, 72, 124), so each is converted:
+
+| | Regulatory (IRB) | ECL |
+|---|---|---|
+| PD | through-the-cycle, 12 months | point-in-time, scenario-weighted; 12-month for Stage 1, lifetime for Stage 2 |
+| LGD | downturn | expected: long-run plus a downturn weight per scenario |
+| EAD / CCF | conservative | best estimate over the loan's life, discounted at EIR |
+| Cycle | ignored | explicit credit-cycle index z, reverting to long-run (para 124) |
+| Floors | PD floor, capital floors | RBI prudential floors (para 82) still apply on top |
+
+Formulas: **PiT PD = Φ( (Φ⁻¹(TTC PD) − √ρ · z) / √(1 − ρ) )** (Vasicek single factor; negative z = downturn, so PD rises). z follows z_t = z₁ · φ^(t−1). Asset correlation ρ uses the Basel formulas
+(corporate 0.12-0.24, residential mortgage 0.15, other retail 0.03-0.16). From a default-rate history the cycle index is **z = (Φ⁻¹(long-run PD) − √(1−ρ) · Φ⁻¹(default rate)) / √ρ**, and φ comes from an AR(1) fit.
+Expected LGD in a scenario = long-run + downturn weight × (downturn − long-run). The probability-weighted PiT PD should average back close to TTC (central tendency).
+The staging PD-change test stays on TTC grade PDs, so stage moves reflect borrower deterioration rather than the cycle; the cycle enters through the scenarios.
+The **IRB & TTC/PiT** tab walks from a regulatory-style EL to the final provision one conversion at a time. The RBI text has no IRB-specific rules, so treat these conversions as industry practice built on the paragraphs above.
+
+### SHAP (Explainability tab, Loan scope)
+Uses the real `shap` package (KernelExplainer) on a fast, vectorised stand-in for the engine that explains **coverage %** (provision ÷ outstanding) for one loan
+held in isolation, against the portfolio's average coverage as the baseline. It is an additive, game-theoretic attribution (Shapley values): the gap between the
+baseline and this loan's coverage is split fairly across the inputs, so the bars always sum exactly to the loan's figure. Outstanding, undrawn limit, category and
+collateral type are held fixed; EAD amortisation, borrower-level Stage 3 and the cure/probation rules are not applied, and RBI floors are checked for this loan
+alone rather than pooled with its category-stage group — so the SHAP figure is an approximation of the real provision, shown alongside the engine's actual number.
 
 ### The tabs
 **Dashboard** (filter by category): *Overview* (KPIs, plain-language summary, stage mix, model-to-final waterfall), *Concentration* (category and customer views, coverage heatmap),
