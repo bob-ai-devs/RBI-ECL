@@ -523,7 +523,10 @@ with T[6]:
         c[1].metric("Gini – out-of-time", f"{2 * auc_oot - 1:.3f}")
         c[2].metric("KS", f"{(tpr - fpr).max():.3f}")
         c[3].metric("AUC – development", f"{auc_tr:.3f}", help="A big gap vs out-of-time AUC means over-fitting")
-        st.success("Ranking power acceptable ✅") if auc_oot >= min_auc else st.error("Ranking power below threshold ❌")
+        if auc_oot >= min_auc:
+            st.success("Ranking power acceptable ✅")
+        else:
+            st.error("Ranking power below threshold ❌")
         l, r = st.columns(2)
         f = go.Figure()
         f.add_scatter(x=fpr, y=tpr, name="Model")
