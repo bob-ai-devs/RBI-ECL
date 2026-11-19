@@ -3,3 +3,8 @@ pandas>=2.0
 numpy>=1.24
 altair>=5.0
 shap>=0.44
+scikit-learn
+scipy
+plotly
+matplotlib
+openpyxl
