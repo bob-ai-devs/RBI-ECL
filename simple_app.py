@@ -191,16 +191,16 @@ def leaf_rules(t, feats):
 
 
 @st.cache_data(show_spinner=False)
-def fit_pools(dev_tr, max_leaves, min_leaf, balanced=True):
+def fit_pools(dev_tr, max_leaves, min_leaf, balanced=True, feats=tuple(FEATS)):
     """One small tree per portfolio. With rare defaults, 'balanced' up-weights defaults ONLY while choosing splits;
     pool PDs are still computed from real counts later. If only 1 pool results, relax the leaf size automatically."""
-    models, notes = {}, []
+    models, notes, fs = {}, [], list(feats)
     for c, d in dev_tr.groupby("category"):
         y = (d.default_year == 1).astype(int)
         ml = int(min_leaf)
         while True:
             t = DecisionTreeClassifier(max_leaf_nodes=int(max_leaves), min_samples_leaf=ml, random_state=0,
-                                       class_weight="balanced" if balanced else None).fit(d[FEATS], y)
+                                       class_weight="balanced" if balanced else None).fit(d[fs], y)
             if t.get_n_leaves() > 1 or ml <= 30 or y.sum() == 0:
                 break
             ml = max(30, ml // 2)
@@ -208,18 +208,18 @@ def fit_pools(dev_tr, max_leaves, min_leaf, balanced=True):
             notes.append(f"{c}: min accounts per pool relaxed {int(min_leaf)} → {ml} to find a split")
         if t.get_n_leaves() == 1:
             notes.append(f"{c}: only 1 pool (too few defaults or no pattern) – add history or merge with a similar portfolio")
-        leaves = t.apply(d[FEATS])
+        leaves = t.apply(d[fs])
         order = pd.Series(y.values).groupby(leaves).mean().sort_values().index  # P1 = lowest risk
-        models[c] = (t, {leaf: i + 1 for i, leaf in enumerate(order)}, leaf_rules(t, FEATS))
+        models[c] = (t, {leaf: i + 1 for i, leaf in enumerate(order)}, leaf_rules(t, fs), fs)
     return models, notes
 
 
 def assign_pool(df, models):
     pool = pd.Series(np.nan, index=df.index, dtype=object)
-    for c, (t, rank, _) in models.items():
+    for c, (t, rank, _, fs) in models.items():
         m = (df.category == c).values
         if m.any():
-            pool[m] = [f"{c}-P{rank[l]}" for l in t.apply(df.loc[m, FEATS])]
+            pool[m] = [f"{c}-P{rank[l]}" for l in t.apply(df.loc[m, fs])]
     return pool
 
 
@@ -296,6 +296,7 @@ def draw_tree(model, feats, classes=True, height=5):
 
 
 def draw_pool_tree(t, X, y, rank):
+    feats = list(X.columns)
     """Pool tree with REAL counts (accounts, defaults, default rate) – not the weighted values used to pick splits."""
     ind = t.decision_path(X)
     n = np.asarray(ind.sum(0)).ravel()
@@ -309,7 +310,7 @@ def draw_pool_tree(t, X, y, rank):
         if tr.children_left[i] != -1:
             stack += [tr.children_right[i], tr.children_left[i]]
     fig, ax = plt.subplots(figsize=(14, 5))
-    arts = plot_tree(t, feature_names=FEATS, filled=True, rounded=True, impurity=False, fontsize=8, precision=2, ax=ax)
+    arts = plot_tree(t, feature_names=feats, filled=True, rounded=True, impurity=False, fontsize=8, precision=2, ax=ax)
     arts = [a for a in arts if a.get_bbox_patch() is not None]  # node boxes only (skip arrows / True-False labels)
     mx = max(rate.max(), 1e-9)
     for i, a in zip(order, arts):
@@ -461,16 +462,22 @@ with T[3]:
     dev_tr, dev_te = dev[dev.snapshot_year < cut].copy(), dev[dev.snapshot_year >= cut].copy()
     st.caption(f"Development window: {years[0]}–{cut - 1} ({len(dev_tr):,} rows) · Out-of-time test: {cut}–{years[-1]} ({len(dev_te):,} rows)")
     balanced = st.checkbox("Up-weight rare defaults when choosing splits (recommended when defaults are few)", True)
-    models, fit_notes = fit_pools(dev_tr, max_leaves, min_leaf, balanced)
+    FEATS_NR = tuple(f for f in FEATS if f != "rating")
+    basis = st.radio("Pools used for the ECL are built from",
+                     ["All variables (incl. rating)", "Without rating (DPD, utilisation, secured %, term)"], horizontal=True)
+    models_all, notes_all = fit_pools(dev_tr, max_leaves, min_leaf, balanced, tuple(FEATS))
+    models_nr, notes_nr = fit_pools(dev_tr, max_leaves, min_leaf, balanced, FEATS_NR)
+    models, fit_notes = (models_all, notes_all) if basis.startswith("All") else (models_nr, notes_nr)
     for n_ in fit_notes:
         st.warning(n_)
+    assump.append(("Pool variables", basis))
     pool_tr, pool_te = assign_pool(dev_tr, models), assign_pool(dev_te, models)
     prod_s["pool"] = assign_pool(prod_s, models)
     if prod_s.pool.isna().any():
         st.warning(f"{int(prod_s.pool.isna().sum())} production accounts are in a portfolio with no development data and are excluded.")
         prod_s = prod_s[prod_s.pool.notna()].copy()
     rows = [{"pool": f"{c}-P{k}", "category": c, "rule": rules_[leaf]}
-            for c, (_, rank, rules_) in models.items() for leaf, k in rank.items()]
+            for c, (_, rank, rules_, _fs) in models.items() for leaf, k in rank.items()]
     pool_info = pd.DataFrame(rows).set_index("pool").sort_index()
     ps = dev_tr.assign(pool=pool_tr).groupby("pool").agg(accounts=("acct_id", "size"), defaults=("default_year", lambda s: int((s == 1).sum())))
     pool_info = pool_info.join(ps)
@@ -478,10 +485,16 @@ with T[3]:
     st.dataframe(pool_info.style.format({"12m default rate": "{:.2%}"}), width="stretch")
     if (pool_info.defaults < 20).any():
         st.caption("⚠️ Pools with fewer than ~20 defaults have noisy PDs – lower 'Max pools' or raise 'Min accounts per pool'.")
-    sel = st.selectbox("See the tree for portfolio", list(models))
+    sel = st.selectbox("See the trees for portfolio", list(models))
     dsel = dev_tr[dev_tr.category == sel]
-    draw_pool_tree(models[sel][0], dsel[FEATS], (dsel.default_year == 1).astype(int), models[sel][1])
-    st.caption("Each box shows real counts. Green = low default rate, red = high default rate (colours are relative within this tree). Leaf boxes are the pools (P1 = safest).")
+    ysel = (dsel.default_year == 1).astype(int)
+    ta, tb = st.tabs(["🌳 With rating", "🌳 Without rating"])
+    for tab_, mdl, fs_, name in ((ta, models_all, list(FEATS), "With rating"), (tb, models_nr, list(FEATS_NR), "Without rating")):
+        with tab_:
+            used = (mdl is models)
+            st.caption(("✅ This tree drives the pools used in the ECL. " if used else "For comparison only. ") + "Variables: " + ", ".join(fs_))
+            draw_pool_tree(mdl[sel][0], dsel[fs_], ysel, mdl[sel][1])
+    st.caption("Each box shows real counts. Green = low default rate, red = high default rate (colours are relative within each tree). Leaf boxes are the pools (P1 = safest).")
     ct = pd.crosstab(prod_s.pool, prod_s.stage).reindex(columns=[1, 2, 3], fill_value=0)
     ct.columns = ["Stage 1", "Stage 2", "Stage 3"]
     st.plotly_chart(px.imshow(ct, text_auto=True, aspect="auto", color_continuous_scale="Blues",
