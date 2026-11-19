@@ -295,6 +295,32 @@ def draw_tree(model, feats, classes=True, height=5):
     plt.close(fig)
 
 
+def draw_pool_tree(t, X, y, rank):
+    """Pool tree with REAL counts (accounts, defaults, default rate) – not the weighted values used to pick splits."""
+    ind = t.decision_path(X)
+    n = np.asarray(ind.sum(0)).ravel()
+    d = np.asarray(ind.T @ y.values).ravel()
+    rate = d / np.maximum(n, 1)
+    tr = t.tree_
+    order, stack = [], [0]
+    while stack:  # pre-order, same order matplotlib draws the boxes
+        i = stack.pop()
+        order.append(i)
+        if tr.children_left[i] != -1:
+            stack += [tr.children_right[i], tr.children_left[i]]
+    fig, ax = plt.subplots(figsize=(14, 5))
+    arts = plot_tree(t, feature_names=FEATS, filled=True, rounded=True, impurity=False, fontsize=8, precision=2, ax=ax)
+    arts = [a for a in arts if a.get_bbox_patch() is not None]  # node boxes only (skip arrows / True-False labels)
+    mx = max(rate.max(), 1e-9)
+    for i, a in zip(order, arts):
+        head = f"Pool P{rank[i]}" if tr.children_left[i] == -1 else a.get_text().split("\n")[0]
+        a.set_text(f"{head}\naccounts = {int(n[i]):,}\ndefaults = {int(d[i]):,}\ndefault rate = {rate[i]:.2%}")
+        a.get_bbox_patch().set_facecolor(plt.cm.RdYlGn_r(0.05 + 0.9 * rate[i] / mx))
+        a.set_color("black")
+    st.pyplot(fig)
+    plt.close(fig)
+
+
 def read_any(f):
     return pd.read_excel(f) if f.name.lower().endswith(("xlsx", "xls")) else pd.read_csv(f)
 
@@ -453,9 +479,9 @@ with T[3]:
     if (pool_info.defaults < 20).any():
         st.caption("⚠️ Pools with fewer than ~20 defaults have noisy PDs – lower 'Max pools' or raise 'Min accounts per pool'.")
     sel = st.selectbox("See the tree for portfolio", list(models))
-    draw_tree(models[sel][0], FEATS)
-    with st.expander("Same tree as plain text"):
-        st.code(export_text(models[sel][0], feature_names=FEATS))
+    dsel = dev_tr[dev_tr.category == sel]
+    draw_pool_tree(models[sel][0], dsel[FEATS], (dsel.default_year == 1).astype(int), models[sel][1])
+    st.caption("Each box shows real counts. Green = low default rate, red = high default rate (colours are relative within this tree). Leaf boxes are the pools (P1 = safest).")
     ct = pd.crosstab(prod_s.pool, prod_s.stage).reindex(columns=[1, 2, 3], fill_value=0)
     ct.columns = ["Stage 1", "Stage 2", "Stage 3"]
     st.plotly_chart(px.imshow(ct, text_auto=True, aspect="auto", color_continuous_scale="Blues",
