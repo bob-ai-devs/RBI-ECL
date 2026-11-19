@@ -191,16 +191,27 @@ def leaf_rules(t, feats):
 
 
 @st.cache_data(show_spinner=False)
-def fit_pools(dev_tr, max_leaves, min_leaf):
-    models = {}
+def fit_pools(dev_tr, max_leaves, min_leaf, balanced=True):
+    """One small tree per portfolio. With rare defaults, 'balanced' up-weights defaults ONLY while choosing splits;
+    pool PDs are still computed from real counts later. If only 1 pool results, relax the leaf size automatically."""
+    models, notes = {}, []
     for c, d in dev_tr.groupby("category"):
         y = (d.default_year == 1).astype(int)
-        t = DecisionTreeClassifier(max_leaf_nodes=int(max_leaves), min_samples_leaf=int(min_leaf),
-                                   random_state=0).fit(d[FEATS], y)
+        ml = int(min_leaf)
+        while True:
+            t = DecisionTreeClassifier(max_leaf_nodes=int(max_leaves), min_samples_leaf=ml, random_state=0,
+                                       class_weight="balanced" if balanced else None).fit(d[FEATS], y)
+            if t.get_n_leaves() > 1 or ml <= 30 or y.sum() == 0:
+                break
+            ml = max(30, ml // 2)
+        if ml != int(min_leaf):
+            notes.append(f"{c}: min accounts per pool relaxed {int(min_leaf)} → {ml} to find a split")
+        if t.get_n_leaves() == 1:
+            notes.append(f"{c}: only 1 pool (too few defaults or no pattern) – add history or merge with a similar portfolio")
         leaves = t.apply(d[FEATS])
         order = pd.Series(y.values).groupby(leaves).mean().sort_values().index  # P1 = lowest risk
         models[c] = (t, {leaf: i + 1 for i, leaf in enumerate(order)}, leaf_rules(t, FEATS))
-    return models
+    return models, notes
 
 
 def assign_pool(df, models):
@@ -423,7 +434,10 @@ with T[3]:
     cut = years[-int(oot_n)]
     dev_tr, dev_te = dev[dev.snapshot_year < cut].copy(), dev[dev.snapshot_year >= cut].copy()
     st.caption(f"Development window: {years[0]}–{cut - 1} ({len(dev_tr):,} rows) · Out-of-time test: {cut}–{years[-1]} ({len(dev_te):,} rows)")
-    models = fit_pools(dev_tr, max_leaves, min_leaf)
+    balanced = st.checkbox("Up-weight rare defaults when choosing splits (recommended when defaults are few)", True)
+    models, fit_notes = fit_pools(dev_tr, max_leaves, min_leaf, balanced)
+    for n_ in fit_notes:
+        st.warning(n_)
     pool_tr, pool_te = assign_pool(dev_tr, models), assign_pool(dev_te, models)
     prod_s["pool"] = assign_pool(prod_s, models)
     if prod_s.pool.isna().any():
@@ -436,6 +450,8 @@ with T[3]:
     pool_info = pool_info.join(ps)
     pool_info["12m default rate"] = pool_info.defaults / pool_info.accounts
     st.dataframe(pool_info.style.format({"12m default rate": "{:.2%}"}), width="stretch")
+    if (pool_info.defaults < 20).any():
+        st.caption("⚠️ Pools with fewer than ~20 defaults have noisy PDs – lower 'Max pools' or raise 'Min accounts per pool'.")
     sel = st.selectbox("See the tree for portfolio", list(models))
     draw_tree(models[sel][0], FEATS)
     with st.expander("Same tree as plain text"):
@@ -445,7 +461,7 @@ with T[3]:
     st.plotly_chart(px.imshow(ct, text_auto=True, aspect="auto", color_continuous_scale="Blues",
                               title="Current accounts: pool × stage (pool = how alike, stage = how much risk has risen)"),
                     width="stretch")
-    assump += [("Out-of-time years", int(oot_n)), ("Max pools / portfolio", int(max_leaves)), ("Min accounts / pool", int(min_leaf))]
+    assump += [("Balanced split weights", balanced), ("Out-of-time years", int(oot_n)), ("Max pools / portfolio", int(max_leaves)), ("Min accounts / pool", int(min_leaf))]
 
 # ───────────────────────────── 4 LRA PD ─────────────────────────────
 with T[4]:
