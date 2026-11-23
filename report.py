@@ -9,7 +9,7 @@ V, O, G, B = "#E8461F", "#F7941D", "#FDB913", "#1B3F8F"
 try:
     MODEL = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")
 except Exception:
-    MODEL = "gemini-2.5-flash"
+    MODEL = "gemini-flash-lite-latest"
 import tempfile
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--v:#E8461F;--o:#F7941D;--g:#FDB913;--b:#1B3F8F;--ink:#1c2233;--mut:#6b7385;--ln:#e3dfd8}
