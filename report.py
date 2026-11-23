@@ -9,7 +9,7 @@ V, O, G, B = "#E8461F", "#F7941D", "#FDB913", "#1B3F8F"
 try:
     MODEL = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")
 except Exception:
-    MODEL = "gemini-2.5-flash"
+    MODEL = "gemini-flash-lite-latest"
 import tempfile
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--v:#E8461F;--o:#F7941D;--g:#FDB913;--b:#1B3F8F;--ink:#1c2233;--mut:#6b7385;--ln:#e3dfd8}
@@ -184,7 +184,7 @@ def build_doc(kind, code):
     from google.genai import types
     k, tab, title, secs = SKEL[kind]
     skel = [{"title": t, "rows": [{"ref": r, "req": q} for r, q in rows]} for t, rows in secs]
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
     out = client.models.generate_content(model=MODEL, contents=PROMPT % (LABEL[kind].upper(), json.dumps(skel, indent=1), code),
         config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
     res = json.loads(out.text)["sections"]
