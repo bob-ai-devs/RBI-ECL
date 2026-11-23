@@ -6,10 +6,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="BoB ECL Reporting Studio", page_icon="🟧", layout="wide")
 V, O, G, B = "#E8461F", "#F7941D", "#FDB913", "#1B3F8F"
-try:
-    MODEL = st.secrets.get("GEMINI_MODEL", "gemini-flash-lite-latest")
-except Exception:
-    MODEL = "gemini-flash-lite-latest"
+MODEL = "gemini-flash-lite-latest"
 import tempfile
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--v:#E8461F;--o:#F7941D;--g:#FDB913;--b:#1B3F8F;--ink:#1c2233;--mut:#6b7385;--ln:#e3dfd8}
@@ -24,11 +21,12 @@ HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
 .st{display:flex;align-items:center;gap:10px;background:#eef2fb;padding:8px 12px}
 .st b{background:var(--b);color:#fff;padding:1px 9px}.st .t{flex:1;font:700 16px Georgia,serif;color:var(--b)}
 table{width:100%;border-collapse:collapse}th{text-align:left;font-size:12px;color:var(--mut);padding:6px 10px;border-bottom:1px solid var(--ln)}
-td{vertical-align:top;padding:8px 10px;border-bottom:1px solid #f0ede8}td.r{width:11%;color:var(--v);font-weight:600}td.q{width:33%}td.a{width:38%}
+td{vertical-align:top;padding:8px 10px;border-bottom:1px solid #f0ede8}td.r{width:9%;color:var(--v);font-weight:600}td.q{width:25%}td.a{width:29%}td.u{width:22%}
 .c{min-height:44px;padding:4px 6px;border-bottom:2px dashed var(--g);background:#fffdf5}
 select{font:inherit;padding:3px;border:1px solid var(--ln);background:#fff}
 button{cursor:pointer;font:inherit;border:0;padding:6px 12px;border-radius:3px}
 .add{background:var(--o);color:#fff;margin:8px 10px}.del{background:none;color:var(--v);font-size:20px;padding:0 6px}
+.ex,.ss{background:#fff6dc;border-left:6px solid var(--g);padding:8px 12px;margin-top:16px}.ss{margin:0;border-left-color:var(--o);background:#fff9ee}.ex b,.ss b{color:var(--b);font:700 13px Georgia,serif}.sb{min-height:38px;padding:3px 5px;margin-top:3px}.u .c2{min-height:44px;padding:4px 6px;background:#eef2fb;border-bottom:2px solid var(--b)}
 .addsec{background:var(--b);color:#fff;margin:18px 0 26px}
 </style></head><body><div id="app"></div><script>
 const S=(t,o)=>parent.postMessage(Object.assign({isStreamlitMessage:true,type:t},o),"*");
@@ -38,7 +36,7 @@ const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;","
 const ST=["Open","In progress","Done","N/A"];
 const fit=()=>S("streamlit:setFrameHeight",{height:document.body.scrollHeight+10});
 const push=()=>{cur=JSON.stringify(doc);S("streamlit:setComponentValue",{value:doc,dataType:"json"});fit()};
-const blank=()=>({id:uid(),ref:"",req:"",resp:"",status:"Open"});
+const blank=()=>({id:uid(),ref:"",req:"",resp:"",sum:"",status:"Open"});
 function prog(){let n=0,d=0;doc.sections.forEach(s=>s.rows.forEach(r=>{n++;if((r.resp||"").trim())d++}));
  const p=n?Math.round(100*d/n):0;document.getElementById("pg").style.width=p+"%";
  document.getElementById("pt").textContent=d+" of "+n+" rows filled ("+p+"%)"}
@@ -46,22 +44,25 @@ function draw(){
  const m=doc.meta||{};
  let h='<div class="hd"><div class="k">Bank of Baroda, RBI ECL Directions 2026 (issued 27 April 2026)</div><h1 contenteditable data-t="title">'+esc(doc.title)+'</h1><div class="meta">'
   +Object.keys(m).map(k=>'<label>'+esc(k)+' <span contenteditable data-m="'+esc(k)+'">'+esc(m[k])+'</span></label>').join("")
-  +'</div><div class="bar"><i id="pg"></i></div><div class="k" id="pt" style="margin-top:6px"></div></div><div class="wrap">';
+  +'</div><div class="bar"><i id="pg"></i></div><div class="k" id="pt" style="margin-top:6px"></div></div><div class="wrap">'
+  +'<div class="ex"><b>Executive summary</b><div class="sb" contenteditable data-e="1">'+esc(doc.exec)+'</div></div>';
  doc.sections.forEach((s,i)=>{
   h+='<div class="sec"><div class="st"><b>'+(i+1)+'</b><span class="t" contenteditable data-s="'+i+'" data-f="title">'+esc(s.title)+'</span><button class="del" title="Delete section" data-act="ds" data-s="'+i+'">&times;</button></div>'
-   +'<table><tr><th>Reference</th><th>Requirement</th><th>Response (fill in)</th><th>Status</th><th></th></tr>';
+   +'<div class="ss"><b>Section summary</b><div class="sb" contenteditable data-s="'+i+'" data-f="sum">'+esc(s.sum)+'</div></div>'
+   +'<table><tr><th>Reference</th><th>Requirement</th><th>Response (fill in)</th><th>Summary</th><th>Status</th><th></th></tr>';
   s.rows.forEach((r,j)=>{const a=' data-s="'+i+'" data-r="'+j+'"';
    h+='<tr><td class="r"><div contenteditable'+a+' data-f="ref">'+esc(r.ref)+'</div></td>'
     +'<td class="q"><div contenteditable'+a+' data-f="req">'+esc(r.req)+'</div></td>'
     +'<td class="a"><div class="c" contenteditable'+a+' data-f="resp">'+esc(r.resp)+'</div></td>'
+    +'<td class="u"><div class="c2" contenteditable'+a+' data-f="sum">'+esc(r.sum)+'</div></td>'
     +'<td><select'+a+' data-f="status">'+ST.map(x=>'<option'+(x==r.status?' selected':'')+'>'+x+'</option>').join("")+'</select></td>'
     +'<td><button class="del" title="Delete row" data-act="dr"'+a+'>&times;</button></td></tr>'});
   h+='</table><button class="add" data-act="ar" data-s="'+i+'">+ Add row</button></div>'});
  h+='<button class="addsec" data-act="as">+ Add section</button></div>';
  document.getElementById("app").innerHTML=h;prog();fit()}
 document.addEventListener("input",e=>{const t=e.target,d=t.dataset;if(!doc||!d)return;
- if(d.t)doc.title=t.innerText;else if(d.m)doc.meta[d.m]=t.innerText;
- else if(d.f){const s=doc.sections[+d.s];if(d.r!==undefined)s.rows[+d.r][d.f]=t.innerText;else s.title=t.innerText}
+ if(d.t)doc.title=t.innerText;else if(d.m)doc.meta[d.m]=t.innerText;else if(d.e!==undefined)doc.exec=t.innerText;
+ else if(d.f){const s=doc.sections[+d.s];if(d.r!==undefined)s.rows[+d.r][d.f]=t.innerText;else s[d.f]=t.innerText}
  prog()});
 document.addEventListener("focusout",e=>{if(doc&&e.target.isContentEditable)push()});
 document.addEventListener("change",e=>{const t=e.target;if(doc&&t.tagName=="SELECT"){doc.sections[+t.dataset.s].rows[+t.dataset.r].status=t.value;push()}});
@@ -70,7 +71,7 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(
  if(a=="ds")doc.sections.splice(i,1);
  if(a=="dr")doc.sections[i].rows.splice(j,1);
  if(a=="ar")doc.sections[i].rows.push(blank());
- if(a=="as")doc.sections.push({id:uid(),title:"New section",rows:[blank()]});
+ if(a=="as")doc.sections.push({id:uid(),title:"New section",sum:"",rows:[blank()]});
  draw();push()});
 addEventListener("message",e=>{if(e.data.type!=="streamlit:render")return;
  const js=JSON.stringify(e.data.args.doc);if(js!==cur){doc=JSON.parse(js);cur=js;draw()}});
@@ -78,10 +79,10 @@ new ResizeObserver(fit).observe(document.body);addEventListener("resize",fit);
 S("streamlit:componentReady",{apiVersion:1});
 </script></body></html>
 '''
-_D = Path(tempfile.gettempdir()) / "ecl_doc_component"
-_D.mkdir(exist_ok=True)
-(_D / "index.html").write_text(HTML, encoding="utf-8")
-_C = components.declare_component("ecl_doc", path=str(_D))
+_TMP = Path(tempfile.gettempdir()) / "ecl_doc_component"
+_TMP.mkdir(exist_ok=True)
+(_TMP / "index.html").write_text(HTML, encoding="utf-8")
+_C = components.declare_component("ecl_doc", path=str(_TMP))
 
 st.markdown("""<style>
 .hero{background:__V__;color:#fff;padding:20px 28px;border-bottom:6px solid __G__;margin:-1rem -1rem 1rem}
@@ -95,9 +96,9 @@ section[data-testid=stSidebar]{background:#eef2fb}
 # ---------------------------------------------------------------- templates
 def mk(k, tab, title, secs):
     meta = {"Version": "0.1", "Owner": "", "Date": dt.date.today().isoformat(), "Model": "", "Risk tier": ""}
-    return {"tab": tab, "title": title, "meta": meta, "sections": [
-        {"id": f"{k}{i}", "title": t, "rows": [
-            {"id": f"{k}{i}.{j}", "ref": r, "req": q, "resp": "", "status": "Open"} for j, (r, q) in enumerate(rows)]}
+    return {"tab": tab, "title": title, "meta": meta, "exec": "", "sections": [
+        {"id": f"{k}{i}", "title": t, "sum": "", "rows": [
+            {"id": f"{k}{i}.{j}", "ref": r, "req": q, "resp": "", "sum": "", "status": "Open"} for j, (r, q) in enumerate(rows)]}
         for i, (t, rows) in enumerate(secs)]}
 
 FLOORS = [("Secured retail loans (100% primary security)", "0.40%", "5%"), ("Corporate loans", "0.40%", "5%"), ("Small and micro enterprises", "0.25%", "5%"),
@@ -291,6 +292,69 @@ VAL = [
   ("S17", "Summary of key strengths and weaknesses"), ("S17", "Sign-off: lead validator, Head of Model Validation, model owner acknowledgement, Chief Risk Officer")]),
 ]
 
+_dv = {t.split(". ", 1)[1]: r for t, r in DEV}
+_vl = {t.split(". ", 1)[1]: r for t, r in VAL}
+DEV = [
+ ("1. Executive summary and model overview", _dv["Purpose, scope and applicability"] + [
+  ("S1.2", "Accounting and regulatory regime (Ind AS 109, RBI ECL Directions 2026) and model materiality tier"),
+  ("S1.1", "EAD balances reconcile to the general ledger at the development reference date"),
+  ("S1.3", "Core formulation as coded: marginal PD, LGD, EAD and discount factor by horizon and scenario, summed with probability weights"),
+  ("S1.3", "Key assumptions, limitations and post-model adjustments (PMAs) in brief")]),
+ ("2. Regulatory and accounting alignment", _dv["Governance and model inventory"] + _dv["Default definition and Stage 3"]
+  + [("Ch. II", "Curing rules and probation period before upgrade from default; cliff-effect check on SICR thresholds")] + _dv["Staging and SICR"]),
+ ("3. Data architecture, quality and segmentation", _dv["Data"] + [
+  ("S3.1", "Observation window covering at least one full credit cycle, including a downturn"),
+  ("S3.2", "Data cleaning rules, exclusions and waterfall reconciliation from raw data to modelling dataset to general ledger"),
+  ("S3.3", "Homogeneous risk segmentation: basis (product, collateral, rating, geography) and evidence of homogeneity")]),
+ ("4. Component modelling methodologies", _dv["ECL measurement"] + [
+  ("S4.1", "Marginal PD term structure by scenario and the move from TTC ratings to PiT term structures"),
+  ("S4.2", "LGD: workout recovery cash flows, cure rates, collateral haircuts, discounting at EIR"),
+  ("S4.3", "EAD: amortisation schedules, prepayment, CCF or behavioural lifetime for revolving facilities")]),
+ ("5. Forward-looking macroeconomic integration", [
+  ("S5.1", "Macro variable selection (GDP, unemployment, inflation, interest rates) and econometric satellite model; stationarity, multicollinearity, sign intuition"),
+  ("S5.2", "Scenario generation method and probability weighting")] + _dv["Forward-looking information and scenarios"]),
+ ("6. Prudential floors, overlays and other provisions", _dv["Prudential floors"] + _dv["Overlays and other provisions"]),
+ ("7. Model performance, back-testing and sensitivity", [
+  ("S7.1", "Discrimination: Gini, AUROC, KS by segment"),
+  ("S7.1", "Calibration: predicted PiT PD, LGD, EAD against realised outcomes (binomial, Hosmer-Lemeshow, traffic light)"),
+  ("S7.1", "Benchmarking against a challenger or vendor model"), ("S7.2", "Sensitivity of ECL to macro variable shifts"),
+  ("S7.2", "Stress analysis: ECL volatility under severe scenarios")] + _dv["Monitoring, limitations and change control"]),
+ ("8. EIR, POCI, income recognition and transition", _dv["EIR, POCI and income recognition"] + _dv["Transition arrangements"]),
+ ("9. Production implementation, governance and controls", _dv["Implementation and automation"] + [
+  ("S9", "IT system integration and automated calculation engine"), ("S9", "Maker-checker controls on inputs, parameters and outputs"),
+  ("S9", "Independent validation sign-off process before production use")]),
+ ("10. Reporting and disclosure", _dv["Reporting and disclosure"]),
+ ("11. Open issues, deviations and sign-off", _dv["Open issues, deviations and sign-off"]),
+]
+VAL = [
+ ("1. Executive summary and validation opinion", [
+  ("S1", "Validation scope: initial validation, annual review or material change; materiality tier"),
+  ("S1", "Overall model rating (Satisfactory, Needs Improvement, Unsatisfactory) and conditions for approval")] + _vl["Independence, scope and materials"]),
+ ("2. Validation plan and test inventory", _vl["Validation plan and test inventory"]),
+ ("3. Governance and regulatory compliance check", _vl["Governance and inventory review"] + [
+  ("Ch. V", "Compliance with internal MRM policy, Ind AS 109 / RBI ECL Directions and regulatory floors (30-DPD and 90-DPD backstops, PD and LGD floors)"),
+  ("Ch. V", "Independent sign-off path including the Risk Management Committee of the Board (RMCB)")]),
+ ("4. Data integrity and representativeness review", _vl["Data validation"] + [
+  ("V2", "ETL pipeline audit: transformations, controls, rerun consistency"), ("V2", "Historical window captures a full economic downturn")]),
+ ("5. Conceptual soundness and methodology challenge", _vl["Conceptual soundness"] + _vl["Staging and SICR validation"] + [
+  ("V4", "Segmentation: homogeneity of risk pools; premature or delayed Stage 2 migration (cliff effect)"),
+  ("V11", "Macro variables: stationarity, multicollinearity, sign intuition"), ("V11", "Non-linearity and probability weighting of base, upside, downside scenarios")]
+  + _vl["Forward-looking information and scenarios"]),
+ ("6. Independent code replication and implementation testing", _vl["Implementation and IT controls"] + [
+  ("V14", "Line-by-line code review (Python, SAS or R)"),
+  ("V14", "Independent replication of parameters: production outputs match development prototype within tolerance")]),
+ ("7. Outcomes analysis: back-testing and benchmarking", [
+  ("V6", "Discrimination power: Gini, AUROC, KS"), ("V7", "Calibration accuracy: binomial, Hosmer-Lemeshow, traffic-light approach"),
+  ("V11", "Benchmarking against challenger models (simpler regressions or vendor benchmarks)")]
+  + _vl["PD validation"] + _vl["LGD validation"] + _vl["EAD and CCF validation"]),
+ ("8. Sensitivity, stress testing, floors and overlay assessment", [("V11", "ECL volatility under stressed macro variable shocks")]
+  + _vl["Floors and output reasonableness"] + _vl["Overlays and other provisions"]),
+ ("9. EIR, POCI and income recognition", _vl["EIR, POCI and income recognition"]),
+ ("10. Reporting, disclosure and transition", _vl["Reporting, disclosure and transition"]),
+ ("11. Findings log and remediation plan", _vl["Findings log"] + [("F", "Remediation plan: owner, severity, target closure date before deployment")]),
+ ("12. Conclusion and sign-off", _vl["Conclusion and sign-off"]),
+]
+
 SKEL = {"dev": ("d", "Development", "ECL Model Development Document", DEV),
         "val": ("v", "Validation", "ECL Model Validation Document", VAL)}
 LABEL = {"dev": "Development", "val": "Validation"}
@@ -302,12 +366,16 @@ def clear_all():
     st.session_state.ver = {k: v + 1 for k, v in st.session_state.ver.items()}
 
 # ---------------------------------------------------------------- Gemini
-PROMPT = """You are a senior model-risk documentation specialist at an Indian bank. Complete the %s DOCUMENT for an ECL model under the RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026 dated 27 April 2026.
-ROWS maps each row id to the regulatory requirement to answer. For every id write the response from the source code only: name the function or constant used and its values or formula. If the code gives no evidence, write exactly "NOT EVIDENCED IN CODE - owner to complete". For the validation document, say what a validator can test in the code and flag gaps or deviations from the Directions. At most 60 words per response.
-Return ONLY JSON: {"responses": {"<row id>": "<text>"}} covering every id.
-ROWS:
+PROMPT = """You are a senior model-risk documentation specialist at an Indian bank, completing part of the %s DOCUMENT for an ECL model under the RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026 (27 April 2026) and Ind AS 109 / IFRS 9 practice.
+Each row has an id and a requirement. Using ONLY the source code, write for each row id: "detail" (max 60 words: name the function or constant used and its values or formula; for the validation document, say what a validator can test and any gap or deviation from the Directions) and "summary" (max 20 words, plain and decisive). If the code gives no evidence, detail must be exactly "Not evidenced in the code provided." and summary exactly "No evidence in code."
+Also write for each section id a "summary" of at most 40 words giving that section's overall position.
+Return ONLY JSON: {"rows": {"<row id>": {"detail": "...", "summary": "..."}}, "sections": {"<section id>": "<summary>"}}
+SECTIONS AND ROWS:
 %s
 CODE:
+%s"""
+EXEC_PROMPT = """Write the executive summary (max 150 words) of the %s DOCUMENT for an ECL model under the RBI ECL Directions 2026, from the section summaries below. State scope, key design choices, main gaps and the overall position in plain language.
+Return ONLY JSON: {"executive_summary": "..."}
 %s"""
 
 def code_text(up):
@@ -325,15 +393,27 @@ def build_doc(kind, code):
     from google import genai
     from google.genai import types
     d = blank_doc(kind)
-    rows = {r["id"]: r["req"] for s in d["sections"] for r in s["rows"]}
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
-    out = client.models.generate_content(model=MODEL, contents=PROMPT % (LABEL[kind].upper(), json.dumps(rows, indent=0), code),
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
-    res = json.loads(out.text)
-    res = res.get("responses", res)
-    for s in d["sections"]:
-        for r in s["rows"]:
-            r["resp"] = str(res.get(r["id"], ""))
+    def ask(prompt):
+        out = client.models.generate_content(model=MODEL, contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
+        return json.loads(out.text)
+    chunks, cur, n = [], [], 0
+    for sec in d["sections"]:
+        cur.append(sec); n += len(sec["rows"])
+        if n >= 35: chunks.append(cur); cur, n = [], 0
+    if cur: chunks.append(cur)
+    for ch in chunks:
+        payload = [{"section_id": s["id"], "title": s["title"], "rows": {r["id"]: r["req"] for r in s["rows"]}} for s in ch]
+        res = ask(PROMPT % (LABEL[kind].upper(), json.dumps(payload, indent=0), code))
+        rows, secs = res.get("rows", {}), res.get("sections", {})
+        for s in ch:
+            s["sum"] = str(secs.get(s["id"], ""))
+            for r in s["rows"]:
+                x = rows.get(r["id"], {})
+                r["resp"], r["sum"] = str(x.get("detail", "")), str(x.get("summary", ""))
+    digest = "\n".join(f"{s['title']}: {s['sum']}" for s in d["sections"])
+    d["exec"] = str(ask(EXEC_PROMPT % (LABEL[kind].upper(), digest)).get("executive_summary", ""))
     return d
 
 with st.sidebar:
@@ -359,20 +439,25 @@ with st.sidebar:
     st.caption("Generated text is a draft. Verify against the RBI Directions before use.")
 
 # ---------------------------------------------------------------- exports
-COLS = ["Ref", "Requirement", "Response", "Status"]
+COLS = ["Ref", "Requirement", "Response", "Summary", "Status"]
+KEYS = ("ref", "req", "resp", "sum", "status")
 def meta_line(d): return ", ".join(f"{k}: {v}" for k, v in d["meta"].items() if v)
 
 def to_html(docs):
     e = H.escape
     css = (f"body{{font:14px/1.5 'Segoe UI',sans-serif;margin:0}}header{{background:{V};color:#fff;padding:18px 28px;border-bottom:6px solid {G}}}"
            f"h1{{font:700 24px Georgia,serif;margin:0}}main{{padding:0 28px 30px}}h2{{color:{B};font:700 17px Georgia,serif;border-left:6px solid {B};padding-left:10px;margin-top:26px}}"
-           f"table{{width:100%;border-collapse:collapse}}th{{background:{B};color:#fff;text-align:left;padding:6px}}td{{border-bottom:1px solid #e6e2da;padding:6px;vertical-align:top;white-space:pre-wrap}}")
+           f".ex,.ss{{background:#fff6dc;border-left:6px solid {G};padding:8px 12px;margin:14px 0;white-space:pre-wrap}}.ss{{background:#fff9ee;border-left-color:{O};margin:6px 0}}"
+           f"table{{width:100%;border-collapse:collapse}}th{{background:{B};color:#fff;text-align:left;padding:6px}}td{{border-bottom:1px solid #e6e2da;padding:6px;vertical-align:top;white-space:pre-wrap}}td:nth-child(4){{background:#eef2fb}}")
     body = ""
     for d in docs:
         body += f"<header><h1>{e(d['title'])}</h1><div>{e(meta_line(d))}</div></header><main>"
+        if d.get("exec"): body += f"<div class='ex'><b>Executive summary</b><br>{e(d['exec'])}</div>"
         for i, s in enumerate(d["sections"], 1):
-            body += f"<h2>{i}. {e(s['title'])}</h2><table><tr>" + "".join(f"<th>{c}</th>" for c in COLS) + "</tr>"
-            body += "".join("<tr>" + "".join(f"<td>{e(r[k])}</td>" for k in ("ref", "req", "resp", "status")) + "</tr>" for r in s["rows"]) + "</table>"
+            body += f"<h2>{i}. {e(s['title'])}</h2>"
+            if s.get("sum"): body += f"<div class='ss'><b>Section summary</b><br>{e(s['sum'])}</div>"
+            body += "<table><tr>" + "".join(f"<th>{c}</th>" for c in COLS) + "</tr>"
+            body += "".join("<tr>" + "".join(f"<td>{e(r.get(k, ''))}</td>" for k in KEYS) + "</tr>" for r in s["rows"]) + "</table>"
         body += "</main>"
     return f"<!doctype html><meta charset='utf-8'><title>ECL report</title><style>{css}</style>{body}".encode()
 
@@ -383,12 +468,15 @@ def to_docx(docs):
         if n: doc.add_page_break()
         doc.add_heading(d["title"], 0)
         doc.add_paragraph(meta_line(d))
+        if d.get("exec"):
+            doc.add_heading("Executive summary", 1); doc.add_paragraph(d["exec"])
         for i, s in enumerate(d["sections"], 1):
             doc.add_heading(f"{i}. {s['title']}", 1)
-            t = doc.add_table(rows=1, cols=4); t.style = "Light Grid Accent 1"
+            if s.get("sum"): doc.add_paragraph().add_run("Section summary: " + s["sum"]).italic = True
+            t = doc.add_table(rows=1, cols=5); t.style = "Light Grid Accent 1"
             for c, x in zip(t.rows[0].cells, COLS): c.text = x
             for r in s["rows"]:
-                for c, k in zip(t.add_row().cells, ("ref", "req", "resp", "status")): c.text = r[k]
+                for c, k in zip(t.add_row().cells, KEYS): c.text = r.get(k, "")
     b = io.BytesIO(); doc.save(b); return b.getvalue()
 
 def to_pdf(docs):
@@ -396,17 +484,20 @@ def to_pdf(docs):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, PageBreak
-    ss = getSampleStyleSheet(); body = ss["BodyText"]; body.fontSize = 8; body.leading = 10
+    ss = getSampleStyleSheet(); body = ss["BodyText"]; body.fontSize = 7.5; body.leading = 9.5
     P = lambda x: Paragraph(H.escape(x or "-").replace("\n", "<br/>"), body)
     out, flow = io.BytesIO(), []
     for n, d in enumerate(docs):
         if n: flow.append(PageBreak())
         flow += [Paragraph(H.escape(d["title"]), ss["Title"]), Paragraph(H.escape(meta_line(d)), body)]
+        if d.get("exec"): flow += [Paragraph("Executive summary", ss["Heading2"]), P(d["exec"])]
         for i, s in enumerate(d["sections"], 1):
             flow.append(Paragraph(f"{i}. {H.escape(s['title'])}", ss["Heading2"]))
-            data = [COLS] + [[P(r[k]) for k in ("ref", "req", "resp", "status")] for r in s["rows"]]
-            t = Table(data, colWidths=[62, 170, 230, 55], repeatRows=1)
+            if s.get("sum"): flow.append(P("Section summary: " + s["sum"]))
+            data = [COLS] + [[P(r.get(k, "")) for k in KEYS] for r in s["rows"]]
+            t = Table(data, colWidths=[48, 125, 165, 115, 50], repeatRows=1)
             t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(B)), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                   ("BACKGROUND", (3, 1), (3, -1), colors.HexColor("#EEF2FB")),
                                    ("GRID", (0, 0), (-1, -1), .3, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
             flow.append(t)
     SimpleDocTemplate(out, pagesize=A4, leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30).build(flow)
@@ -418,13 +509,15 @@ def to_xlsx(docs):
     wb = Workbook(); wb.remove(wb.active)
     for d in docs:
         ws = wb.create_sheet(d["tab"]); ws.append([d["title"]]); ws.append([meta_line(d)]); ws["A1"].font = Font(bold=True, size=14)
-        for w, c in zip((14, 60, 70, 14), "ABCD"): ws.column_dimensions[c].width = w
+        for w, c in zip((12, 50, 60, 40, 12), "ABCDE"): ws.column_dimensions[c].width = w
+        if d.get("exec"): ws.append(["Executive summary", d["exec"]]); ws[ws.max_row][0].font = Font(bold=True)
         for s in d["sections"]:
             ws.append([]); ws.append([s["title"]])
             for c in ws[ws.max_row]: c.fill = PatternFill("solid", fgColor=G[1:]); c.font = Font(bold=True)
+            if s.get("sum"): ws.append(["Summary", s["sum"]])
             ws.append(COLS)
             for c in ws[ws.max_row]: c.fill = PatternFill("solid", fgColor=B[1:]); c.font = Font(bold=True, color="FFFFFF")
-            for r in s["rows"]: ws.append([r["ref"], r["req"], r["resp"], r["status"]])
+            for r in s["rows"]: ws.append([r.get(k, "") for k in KEYS])
         for row in ws.iter_rows():
             for c in row: c.alignment = Alignment(wrap_text=True, vertical="top")
     b = io.BytesIO(); wb.save(b); return b.getvalue()
