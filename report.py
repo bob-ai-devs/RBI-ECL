@@ -10,7 +10,77 @@ try:
     MODEL = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")
 except Exception:
     MODEL = "gemini-2.5-flash"
-_C = components.declare_component("ecl_doc", path=str(Path(__file__).parent / "ecl_doc"))
+import tempfile
+HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--v:#E8461F;--o:#F7941D;--g:#FDB913;--b:#1B3F8F;--ink:#1c2233;--mut:#6b7385;--ln:#e3dfd8}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 "Segoe UI",system-ui,sans-serif;color:var(--ink);background:#fff}
+[contenteditable]{outline:none;white-space:pre-wrap;border-radius:2px}[contenteditable]:focus{box-shadow:0 0 0 2px var(--g)}
+.hd{background:var(--v);color:#fff;padding:20px 26px 16px;border-bottom:6px solid var(--g)}
+.hd h1{margin:2px 0 0;font:700 25px Georgia,serif}.k{font-size:12px;color:#ffe9d6}
+.meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}.meta label{font-size:12px;color:#ffe9d6}
+.meta span{display:inline-block;min-width:80px;padding:2px 8px;background:rgba(255,255,255,.18);color:#fff}
+.bar{height:8px;background:rgba(255,255,255,.3);border-radius:4px;margin-top:14px}.bar i{display:block;height:100%;background:var(--g);border-radius:4px;width:0;transition:width .3s}
+.wrap{padding:0 22px}.sec{margin-top:20px;border:1px solid var(--ln);border-left:6px solid var(--b)}
+.st{display:flex;align-items:center;gap:10px;background:#eef2fb;padding:8px 12px}
+.st b{background:var(--b);color:#fff;padding:1px 9px}.st .t{flex:1;font:700 16px Georgia,serif;color:var(--b)}
+table{width:100%;border-collapse:collapse}th{text-align:left;font-size:12px;color:var(--mut);padding:6px 10px;border-bottom:1px solid var(--ln)}
+td{vertical-align:top;padding:8px 10px;border-bottom:1px solid #f0ede8}td.r{width:11%;color:var(--v);font-weight:600}td.q{width:33%}td.a{width:38%}
+.c{min-height:44px;padding:4px 6px;border-bottom:2px dashed var(--g);background:#fffdf5}
+select{font:inherit;padding:3px;border:1px solid var(--ln);background:#fff}
+button{cursor:pointer;font:inherit;border:0;padding:6px 12px;border-radius:3px}
+.add{background:var(--o);color:#fff;margin:8px 10px}.del{background:none;color:var(--v);font-size:20px;padding:0 6px}
+.addsec{background:var(--b);color:#fff;margin:18px 0 26px}
+</style></head><body><div id="app"></div><script>
+const S=(t,o)=>parent.postMessage(Object.assign({isStreamlitMessage:true,type:t},o),"*");
+let doc=null,cur="";
+const uid=()=>Math.random().toString(36).slice(2,8);
+const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const ST=["Open","In progress","Done","N/A"];
+const fit=()=>S("streamlit:setFrameHeight",{height:document.body.scrollHeight+10});
+const push=()=>{cur=JSON.stringify(doc);S("streamlit:setComponentValue",{value:doc,dataType:"json"});fit()};
+const blank=()=>({id:uid(),ref:"",req:"",resp:"",status:"Open"});
+function prog(){let n=0,d=0;doc.sections.forEach(s=>s.rows.forEach(r=>{n++;if((r.resp||"").trim())d++}));
+ const p=n?Math.round(100*d/n):0;document.getElementById("pg").style.width=p+"%";
+ document.getElementById("pt").textContent=d+" of "+n+" rows filled ("+p+"%)"}
+function draw(){
+ const m=doc.meta||{};
+ let h='<div class="hd"><div class="k">Bank of Baroda, RBI ECL Directions 2026 (issued 27 April 2026)</div><h1 contenteditable data-t="title">'+esc(doc.title)+'</h1><div class="meta">'
+  +Object.keys(m).map(k=>'<label>'+esc(k)+' <span contenteditable data-m="'+esc(k)+'">'+esc(m[k])+'</span></label>').join("")
+  +'</div><div class="bar"><i id="pg"></i></div><div class="k" id="pt" style="margin-top:6px"></div></div><div class="wrap">';
+ doc.sections.forEach((s,i)=>{
+  h+='<div class="sec"><div class="st"><b>'+(i+1)+'</b><span class="t" contenteditable data-s="'+i+'" data-f="title">'+esc(s.title)+'</span><button class="del" title="Delete section" data-act="ds" data-s="'+i+'">&times;</button></div>'
+   +'<table><tr><th>Reference</th><th>Requirement</th><th>Response (fill in)</th><th>Status</th><th></th></tr>';
+  s.rows.forEach((r,j)=>{const a=' data-s="'+i+'" data-r="'+j+'"';
+   h+='<tr><td class="r"><div contenteditable'+a+' data-f="ref">'+esc(r.ref)+'</div></td>'
+    +'<td class="q"><div contenteditable'+a+' data-f="req">'+esc(r.req)+'</div></td>'
+    +'<td class="a"><div class="c" contenteditable'+a+' data-f="resp">'+esc(r.resp)+'</div></td>'
+    +'<td><select'+a+' data-f="status">'+ST.map(x=>'<option'+(x==r.status?' selected':'')+'>'+x+'</option>').join("")+'</select></td>'
+    +'<td><button class="del" title="Delete row" data-act="dr"'+a+'>&times;</button></td></tr>'});
+  h+='</table><button class="add" data-act="ar" data-s="'+i+'">+ Add row</button></div>'});
+ h+='<button class="addsec" data-act="as">+ Add section</button></div>';
+ document.getElementById("app").innerHTML=h;prog();fit()}
+document.addEventListener("input",e=>{const t=e.target,d=t.dataset;if(!doc||!d)return;
+ if(d.t)doc.title=t.innerText;else if(d.m)doc.meta[d.m]=t.innerText;
+ else if(d.f){const s=doc.sections[+d.s];if(d.r!==undefined)s.rows[+d.r][d.f]=t.innerText;else s.title=t.innerText}
+ prog()});
+document.addEventListener("focusout",e=>{if(doc&&e.target.isContentEditable)push()});
+document.addEventListener("change",e=>{const t=e.target;if(doc&&t.tagName=="SELECT"){doc.sections[+t.dataset.s].rows[+t.dataset.r].status=t.value;push()}});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(!b||!doc)return;
+ const i=+b.dataset.s,j=+b.dataset.r,a=b.dataset.act;
+ if(a=="ds")doc.sections.splice(i,1);
+ if(a=="dr")doc.sections[i].rows.splice(j,1);
+ if(a=="ar")doc.sections[i].rows.push(blank());
+ if(a=="as")doc.sections.push({id:uid(),title:"New section",rows:[blank()]});
+ draw();push()});
+addEventListener("message",e=>{if(e.data.type!=="streamlit:render")return;
+ const js=JSON.stringify(e.data.args.doc);if(js!==cur){doc=JSON.parse(js);cur=js;draw()}});
+S("streamlit:componentReady",{apiVersion:1});
+</script></body></html>
+'''
+_D = Path(tempfile.gettempdir()) / "ecl_doc_component"
+_D.mkdir(exist_ok=True)
+(_D / "index.html").write_text(HTML, encoding="utf-8")
+_C = components.declare_component("ecl_doc", path=str(_D))
 
 st.markdown("""<style>
 .hero{background:__V__;color:#fff;padding:20px 28px;border-bottom:6px solid __G__;margin:-1rem -1rem 1rem}
