@@ -181,7 +181,7 @@ def gemini_fill(code, overwrite):
     D = st.session_state.docs
     rows = {n: {r["id"]: r["req"] for s in D[k]["sections"] for r in s["rows"] if overwrite or not r["resp"].strip()}
             for n, k in (("development", "dev"), ("validation", "val"))}
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
     out = client.models.generate_content(model=MODEL, contents=PROMPT % (json.dumps(rows, indent=1), code),
         config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
     res = json.loads(out.text)
