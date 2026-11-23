@@ -9,7 +9,7 @@ V, O, G, B = "#E8461F", "#F7941D", "#FDB913", "#1B3F8F"
 try:
     MODEL = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")
 except Exception:
-    MODEL = "gemini-flash-lite-latest"
+    MODEL = "gemini-2.5-flash"
 import tempfile
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--v:#E8461F;--o:#F7941D;--g:#FDB913;--b:#1B3F8F;--ink:#1c2233;--mut:#6b7385;--ln:#e3dfd8}
@@ -74,6 +74,7 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(
  draw();push()});
 addEventListener("message",e=>{if(e.data.type!=="streamlit:render")return;
  const js=JSON.stringify(e.data.args.doc);if(js!==cur){doc=JSON.parse(js);cur=js;draw()}});
+new ResizeObserver(fit).observe(document.body);addEventListener("resize",fit);
 S("streamlit:componentReady",{apiVersion:1});
 </script></body></html>
 '''
@@ -151,19 +152,22 @@ VAL = [
   ("Ch. V", "Findings, severity, remediation owner and date; overall validation conclusion and sign-off.")]),
 ]
 
-def fresh():
-    return {"dev": mk("d", "Development", "ECL Model Development Document", DEV),
-            "val": mk("v", "Validation", "ECL Model Validation Document", VAL)}
+SKEL = {"dev": ("d", "Development", "ECL Model Development Document", DEV),
+        "val": ("v", "Validation", "ECL Model Validation Document", VAL)}
+LABEL = {"dev": "Development", "val": "Validation"}
+for _k, _v in (("docs", {"dev": None, "val": None}), ("ver", {"dev": 0, "val": 0}), ("up_key", 0), ("sig", None)):
+    st.session_state.setdefault(_k, _v)
 
-if "docs" not in st.session_state:
-    st.session_state.docs, st.session_state.ver = fresh(), {"dev": 0, "val": 0}
+def clear_all():
+    st.session_state.docs = {"dev": None, "val": None}
+    st.session_state.ver = {k: v + 1 for k, v in st.session_state.ver.items()}
 
 # ---------------------------------------------------------------- Gemini
-PROMPT = """You are a model-risk documentation analyst at an Indian bank. The RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026, dated 27 April 2026, require ECL models to be documented and independently validated.
-Read the source code below and complete the DEVELOPMENT and VALIDATION document rows.
-Rules: use only facts evidenced in the code (functions, constants, thresholds, formulas) and name the function or constant; if the code gives no evidence write exactly "NOT EVIDENCED IN CODE - owner to complete"; for validation rows say what a validator can test and flag gaps or deviations from the Directions; at most 90 words per row.
-Return ONLY JSON: {"development": {"<row id>": "<text>"}, "validation": {"<row id>": "<text>"}}
-ROWS:
+PROMPT = """You are a senior model-risk documentation specialist at an Indian bank. Write the %s DOCUMENT for an ECL model under the RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026 dated 27 April 2026 (effective 1 April 2027).
+The SKELETON is the regulation-based structure. Keep every section and every requirement, tighten wording where useful, and add rows wherever the Directions need more coverage (staging, SICR, PD/LGD/EAD, scenarios, floors, EIR/POCI, disclosures, model risk management, automation, transition). Do not invent paragraph numbers beyond those given; otherwise cite chapter or annex names.
+For each row, "resp" is the response drawn only from the source code: name the function or constant used and its values or formula. If the code gives no evidence, resp must be exactly "NOT EVIDENCED IN CODE - owner to complete". For the validation document, resp says what a validator can test in the code and flags gaps or deviations from the Directions. Max 90 words per resp.
+Return ONLY JSON: {"sections": [{"title": "...", "rows": [{"ref": "...", "req": "...", "resp": "..."}]}]}
+SKELETON:
 %s
 CODE:
 %s"""
@@ -175,41 +179,42 @@ def code_text(up):
         raw = "\n\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
     return raw[:60000]
 
-def gemini_fill(code, overwrite):
+def build_doc(kind, code):
     from google import genai
     from google.genai import types
-    D = st.session_state.docs
-    rows = {n: {r["id"]: r["req"] for s in D[k]["sections"] for r in s["rows"] if overwrite or not r["resp"].strip()}
-            for n, k in (("development", "dev"), ("validation", "val"))}
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
-    out = client.models.generate_content(model=MODEL, contents=PROMPT % (json.dumps(rows, indent=1), code),
+    k, tab, title, secs = SKEL[kind]
+    skel = [{"title": t, "rows": [{"ref": r, "req": q} for r, q in rows]} for t, rows in secs]
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    out = client.models.generate_content(model=MODEL, contents=PROMPT % (LABEL[kind].upper(), json.dumps(skel, indent=1), code),
         config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
-    res = json.loads(out.text)
-    for n, k in (("development", "dev"), ("validation", "val")):
-        for s in D[k]["sections"]:
-            for r in s["rows"]:
-                if r["id"] in res.get(n, {}):
-                    r["resp"] = str(res[n][r["id"]])
-        st.session_state.ver[k] += 1
+    res = json.loads(out.text)["sections"]
+    if not res: raise ValueError("Gemini returned no sections")
+    d = mk(k, tab, title, [(s["title"], [(r.get("ref", ""), r.get("req", "")) for r in s["rows"]]) for s in res])
+    for si, s in enumerate(res):
+        for ri, r in enumerate(s["rows"]):
+            d["sections"][si]["rows"][ri]["resp"] = str(r.get("resp", ""))
+    return d
 
 with st.sidebar:
     st.header("Gemini assistant")
-    up = st.file_uploader("Upload model code", type=["py", "ipynb", "txt", "sql", "r", "sas"])
-    over = st.checkbox("Overwrite rows that already have text", False)
-    if st.button("Read code and fill both documents", disabled=up is None):
-        try:
-            with st.spinner("Gemini is reading the code..."):
-                gemini_fill(code_text(up), over)
-            st.toast("Both documents updated. Review and edit every row.")
-        except KeyError:
-            st.error("Add GEMINI_API_KEY to .streamlit/secrets.toml (or Streamlit Cloud secrets).")
-        except Exception as e:
-            st.error(f"Gemini call failed: {e}")
+    up = st.file_uploader("Upload model code", type=["py", "ipynb", "txt", "sql", "r", "sas"], key=f"up{st.session_state.up_key}")
+    if up is not None and (up.name, up.size) != st.session_state.sig:
+        clear_all(); st.session_state.sig = (up.name, up.size)   # a new file resets both documents
+    for k in ("dev", "val"):
+        if st.button(f"Create {LABEL[k]} document", key=f"mk_{k}", disabled=up is None, use_container_width=True):
+            try:
+                with st.spinner(f"Gemini is writing the {LABEL[k].lower()} document..."):
+                    st.session_state.docs[k] = build_doc(k, code_text(up))   # touches only this document
+                    st.session_state.ver[k] += 1
+                st.toast(f"{LABEL[k]} document created. Review and edit every row.")
+            except KeyError:
+                st.error("Add GEMINI_API_KEY to Streamlit secrets.")
+            except Exception as e:
+                st.error(f"Gemini call failed: {e}")
+    st.caption("Creating a document again replaces only that document.")
     st.divider()
-    if st.button("Reset both documents"):
-        st.session_state.docs = fresh()
-        st.session_state.ver = {k: v + 1 for k, v in st.session_state.ver.items()}
-        st.rerun()
+    if st.button("Clear both documents", use_container_width=True):
+        clear_all(); st.session_state.up_key += 1; st.session_state.sig = None; st.rerun()
     st.caption("Generated text is a draft. Verify against the RBI Directions before use.")
 
 # ---------------------------------------------------------------- exports
@@ -288,15 +293,22 @@ st.markdown("<div class='hero'><h1>ECL Reporting Studio</h1><p>Development and V
 tabs = st.tabs(["Development document", "Validation document", "Export reports"])
 for tab, k in zip(tabs[:2], ("dev", "val")):
     with tab:
-        v = _C(doc=st.session_state.docs[k], key=f"c_{k}_{st.session_state.ver[k]}", default=None)
-        if v: st.session_state.docs[k] = v
+        d = st.session_state.docs[k]
+        if d is None:
+            st.info(f"No {LABEL[k].lower()} document yet. Upload model code in the sidebar, then click 'Create {LABEL[k]} document'.")
+        else:
+            v = _C(doc=d, key=f"c_{k}_{st.session_state.ver[k]}", default=None)
+            if v: st.session_state.docs[k] = v
 with tabs[2]:
-    pick = st.radio("Document", ["Development", "Validation", "Both"], horizontal=True)
-    D = st.session_state.docs
-    docs = {"Development": [D["dev"]], "Validation": [D["val"]], "Both": [D["dev"], D["val"]]}[pick]
-    stamp = dt.date.today().strftime("%Y%m%d"); base = f"BoB_ECL_{pick}_{stamp}"
-    c = st.columns(4)
-    c[0].download_button("PDF", to_pdf(docs), base + ".pdf", "application/pdf")
-    c[1].download_button("Word (.docx)", to_docx(docs), base + ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    c[2].download_button("Excel (.xlsx)", to_xlsx(docs), base + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    c[3].download_button("Standalone HTML", to_html(docs), base + ".html", "text/html")
+    have = {k: st.session_state.docs[k] for k in ("dev", "val") if st.session_state.docs[k]}
+    if not have:
+        st.info("Create at least one document first.")
+    else:
+        pick = st.radio("Document", [LABEL[k] for k in have] + (["Both"] if len(have) == 2 else []), horizontal=True)
+        docs = [have[k] for k in have if pick in (LABEL[k], "Both")]
+        base = f"BoB_ECL_{pick}_{dt.date.today():%Y%m%d}"
+        c = st.columns(4)
+        c[0].download_button("PDF", to_pdf(docs), base + ".pdf", "application/pdf")
+        c[1].download_button("Word (.docx)", to_docx(docs), base + ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        c[2].download_button("Excel (.xlsx)", to_xlsx(docs), base + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        c[3].download_button("Standalone HTML", to_html(docs), base + ".html", "text/html")
