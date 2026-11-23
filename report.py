@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="BoB ECL Reporting Studio", page_icon="🟧", layout="wide")
 V, O, G, B = "#E8461F", "#F7941D", "#FDB913", "#1B3F8F"
 try:
-    MODEL = st.secrets.get("GEMINI_MODEL", "gemini-2.5-flash")
+    MODEL = st.secrets.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 except Exception:
     MODEL = "gemini-flash-lite-latest"
 import tempfile
@@ -94,62 +94,201 @@ section[data-testid=stSidebar]{background:#eef2fb}
 
 # ---------------------------------------------------------------- templates
 def mk(k, tab, title, secs):
-    meta = {"Version": "0.1", "Owner": "", "Date": dt.date.today().isoformat(), "Model": ""}
+    meta = {"Version": "0.1", "Owner": "", "Date": dt.date.today().isoformat(), "Model": "", "Risk tier": ""}
     return {"tab": tab, "title": title, "meta": meta, "sections": [
         {"id": f"{k}{i}", "title": t, "rows": [
             {"id": f"{k}{i}.{j}", "ref": r, "req": q, "resp": "", "status": "Open"} for j, (r, q) in enumerate(rows)]}
         for i, (t, rows) in enumerate(secs)]}
 
+FLOORS = [("Secured retail loans (100% primary security)", "0.40%", "5%"), ("Corporate loans", "0.40%", "5%"), ("Small and micro enterprises", "0.25%", "5%"),
+ ("Medium enterprises", "0.40%", "5%"), ("Farm credit", "0.25%", "5%"), ("Loans to banks, NBFCs, regulated FIs", "0.40%", "5%"),
+ ("Loans against term deposits, LIC policy, KVP", "0.40%", "0.40%"), ("Gold loans", "0.40%", "1.50%"), ("State government direct or guaranteed", "0.40%", "2.50%"),
+ ("Unsecured retail loans", "1%", "5%"), ("Housing loans to individuals", "0.25%", "1.50%"), ("Other residential real estate", "0.40%", "1.50%"),
+ ("Other commercial real estate", "0.40%", "2.50%"), ("CRE-ADC (non-qualifying)", "1.25%", "DCCO-event based"), ("CRE-RH (ADC)", "1%", "DCCO-event based"),
+ ("Project finance, pre-operational", "1%", "DCCO-event based"), ("Project finance, operational", "0.40%", "5%"),
+ ("Central govt guarantee schemes (CGTMSE, NCGTC, CRGFTLIH)", "0.25%", "0.25%"), ("Restructured standard (natural calamity)", "5%", "10% if SICR"), ("Residual category", "0.40%", "5%")]
+SICR_P = ["Internal rating downgrade vs origination (notches)", "External rating downgrade", "Change in PD vs origination (absolute and relative)", "Loan pricing / credit spread change",
+ "Macroeconomic or sector outlook", "Borrower financials (revenue, margins, leverage, DSCR)", "Behavioural score", "Collateral value / LTV", "Watch-list status", "Covenant breach, actual or expected"]
+NPA_T = ["Term loan or bills interest / principal overdue more than 90 days", "OD/CC out of order (over limit or drawing power, no credits, or credits below interest for 90 days)",
+ "Drawing power based on stock statements older than 3 months, drawings for 90 days", "Crop loans overdue for the prescribed seasons", "Securitisation liquidity facility or partial credit enhancement outstanding 90 days",
+ "Credit card minimum due unpaid for 90 days", "Bond or debenture interest / instalment unpaid more than 90 days"]
+DATA_S = ["Account / exposure master", "Repayment and DPD history", "Ratings and scores", "Collateral and recoveries", "Macroeconomic series"]
+INSTR = [("Loans", "In scope"), ("Debt securities (not at FVTPL)", "In scope"), ("Trade receivables", "In scope, simplified approach allowed"), ("Lease receivables", "In scope, simplified approach allowed"),
+ ("Loan commitments / undrawn limits", "In scope"), ("Off-balance-sheet exposures (guarantees)", "In scope"), ("Investments in subsidiaries, associates, JVs", "Excluded"), ("Assets measured at FVTPL", "Excluded from ECL staging")]
+FILL = "Developer entry: "
+
 DEV = [
- ("Scope, governance and policy", [
-  ("Ch. I-III", "Instruments in scope (loans, debt securities, commitments, off-balance-sheet exposures) and exclusions / carve-outs (SLR investments, central-government claims)."),
-  ("Ch. III", "Board-approved ECL policy; oversight by a committee including CFO and CRO; effective date 1 April 2027."),
-  ("Ch. V", "Model inventory entry: owner, developer, risk tier, dependencies, validation status.")]),
- ("Staging and SICR", [
-  ("Ch. II / III", "Stage 3 = NPA (borrower level); automated NPA flags; treatment of accounts that were NPA on 31 March 2027."),
-  ("Para 26-27, Annex 1", "SICR definition versus origination and the parameters used (ratings, behavioural score, watch-list, collateral, covenants) with thresholds."),
-  ("Para 33", "Rebuttable presumption: more than 30 days past due; revolving facility over limit / drawing power up to 60 days; rebuttal evidence standard."),
-  ("Ch. III", "Collective SICR segmentation, Stage 2 at facility level, upgrade rules from Stage 3 and Stage 2.")]),
- ("PD, LGD and EAD", [
-  ("Ch. III", "12-month PD (Stage 1) and lifetime PD (Stage 2): data, segmentation, model form, calibration, 0.03% floor on 12-month PD."),
-  ("Ch. III", "LGD: recovery and cure estimation, discounting; backstops 65% secured / 70% unsecured; 30% for cash, gold, government securities, LIC policy, KVP, NSC."),
-  ("Ch. III", "EAD and CCF for undrawn limits and off-balance-sheet items; credit risk mitigants not netted from EAD.")]),
- ("Forward-looking scenarios", [
-  ("Ch. III", "Macroeconomic variables, at least three scenarios (base, upside, downside), probability weights and their basis."),
-  ("Ch. V", "Link from macro variables to PD and LGD; horizon beyond forecasts for lifetime ECL; country risk and unhedged FX exposure.")]),
- ("Prudential floors and overlays", [
-  ("Ch. III", "Product-wise Stage 1 and Stage 2 floors; final allowance = higher of model ECL and floor."),
-  ("Ch. III", "Stage 3 time-based floors applied at account level; additional 5% for wilful defaulters; management overlay treatment.")]),
- ("EIR, POCI and income recognition", [
-  ("Ch. IV", "EIR determination (fees, costs, premiums); floating-rate re-estimation; migration of pre-April 2027 loans by 31 March 2030."),
-  ("Ch. III", "POCI assets: credit-adjusted EIR, lifetime ECL; cash-basis income for Stage 3 / POCI.")]),
- ("Data, automation and transition", [
-  ("Annex 3", "Data sources, lineage and quality checks; straight-through processing of staging and ECL; manual-override approvals; exception logs kept 3 years."),
-  ("Transition", "Day 1 fair valuation, transitional adjustment = max(0, ECL on 1 Apr 2027 minus IRAC provisions on 31 Mar 2027), CET1 add-back schedule.")]),
+ ("1. Purpose, scope and applicability", [("S1", "Model purpose, run frequency (first quarterly ECL report due 30 June 2027) and business use of outputs (provisioning, capital, disclosure, pricing)")]
+  + [("S1.1", f"{n} ({d}). Covered by this model? If not, give the reason") for n, d in INSTR]
+  + [("S1.1", "Carve-outs kept in Stage 1 without SICR testing: SLR-eligible investments, direct central-government claims, central-government guaranteed exposures, zero risk-weight foreign sovereigns / central banks / MDBs / BIS / IMF. Describe implementation"),
+     ("S1.2", "Segmentation table: for each segment give product category for floors, exposure (Rs crore), approach (PD-LGD-EAD or provision matrix) and data source")]),
+ ("2. Governance and model inventory", [
+  ("Ch. V", "Board-approved ECL policy: name, version, approval date"), ("Ch. V", "Oversight committee including CFO and CRO: members and meeting frequency"),
+  ("Ch. V", "Model inventory entry: owner, developer, risk tier, interdependencies"), ("Ch. V", "Three lines: first-line owner duties, second-line risk and compliance monitoring, third-line internal audit assurance"),
+  ("Ch. V", "Third-party or vendor model: vendor, documentation access, RBI supervisory evaluation clause (or N/A)"),
+  ("Ch. V", "Model lifecycle stage: development, pre-implementation validation, implemented, monitoring or recalibration")]),
+ ("3. Data", [("S3", f"{d}: source system, period, fields used, owner, quality checks, known gaps and proxies") for d in DATA_S]
+  + [("S3", "Data lineage diagram reference"), ("S3", "Reconciliation of model input to general ledger"), ("S3", "Treatment of missing values, outliers and data breaks")]),
+ ("4. Default definition and Stage 3", [("Ch. II", "Default = NPA, so NPA = Stage 3 = lifetime ECL, applied at borrower level (all exposures of a borrower move together). Confirm implementation")]
+  + [("Ch. II", f"NPA trigger: {t}. Implemented? Source field and notes") for t in NPA_T]
+  + [("Transition", "Accounts NPA on 31 March 2027 are not upgraded merely because of the framework change. Handling"),
+     ("S4", "Stage 3 time-in-stage tracking (needed for floors)"), ("S4", "Identification of POCI assets at origination or purchase")]),
+ ("5. Staging and SICR", [("Para 30", "SICR definition: change in default risk over remaining life versus the same period at origination, using reasonable and supportable information. Describe the approach; note Stage 3 is borrower level and Stage 2 facility level")]
+  + [("Para 30, Annex 1", f"SICR parameter: {p}. Used? Threshold or trigger, rationale and calibration evidence") for p in SICR_P]
+  + [("Para 33", "Presumption: more than 30 days past due indicates SICR. Implemented? Rebuttal procedure, evidence required, approver"),
+     ("Para 33", "Presumption: revolving facility over limit / drawing power continuously up to 60 days indicates SICR. Implemented? Rebuttal procedure"),
+     ("Para 33", "Rebuttal log location (rebuttal must be documented, reasonable, not routine)"),
+     ("Ch. III", "Collective SICR assessment segments (instrument type, collateral, maturity, geography, industry)"),
+     ("Ch. III", "Consistent application to similar exposures; board approval of SICR parameters"), ("Ch. III", "Low credit risk exemption used? If yes, where"),
+     ("Upgrade", "Stage 3 to Stage 1 (non-restructured, no SICR evidence) or to Stage 2 (SICR evidence)"),
+     ("Upgrade", "Restructured non-MSME above Rs 25 crore: Stage 3 to 2 to 1 per Resolution of Stressed Assets Directions, 2025"),
+     ("Upgrade", "Restructured MSME below Rs 25 crore: Stage 3 directly to Stage 1 on meeting conditions"), ("S5", "Stage decision flow chart reference")]),
+ ("6. ECL measurement", [
+  ("S6", "ECL = PD x LGD x EAD x discount factor, probability-weighted across scenarios. Stage 1 uses 12-month PD; Stages 2 and 3 lifetime. Confirm formula as coded"),
+  ("S6.1", "12-month PD: methodology, model form, segmentation"), ("S6.1", "Lifetime PD term structure: method (transition matrix, survival, vintage)"),
+  ("S6.1", "PD development sample, observation window, default rate"), ("S6.1", "Through-the-cycle to point-in-time conversion"), ("S6.1", "Calibration technique and results"),
+  ("S6.1", "0.03% floor on 12-month PD applied? If not, why"), ("S6.1", "Origination PD retained for SICR comparison"), ("S6.1", "PD performance statistics (Gini, KS, calibration)"),
+  ("S6.2", "LGD approach: internal estimate, workout or collateral-based"), ("S6.2", "Recovery cash flows, timing, cure rates, costs"), ("S6.2", "Discount rate for recoveries"),
+  ("S6.2", "Collateral haircuts and valuation refresh"), ("S6.2", "Backstop where data are insufficient: 65% secured portion, 70% unsecured portion. Applied?"),
+  ("S6.2", "30% LGD portions (cash, gold, government securities, LIC policies, KVP, NSC). Applied?"), ("S6.2", "Downturn adjustment"),
+  ("S6.3", "EAD for amortising, revolving and bullet products"), ("S6.3", "CCF source for undrawn limits and off-balance-sheet items"),
+  ("S6.3", "Credit risk mitigants are not netted from EAD. Confirm"), ("S6.3", "Discount rate: EIR (contractual rate allowed for opening ECL at 1 April 2027)"),
+  ("Annex 2", "Trade and lease receivables: provision matrix, lifetime ECL at all times. Used or N/A")]),
+ ("7. Forward-looking information and scenarios", [
+  ("S7", "Macro variables: source, used for PD or LGD, link method and lag, horizon (one line per variable)"),
+  ("S7", "Base scenario: probability weight, narrative, key assumptions, ECL impact"), ("S7", "Upside scenario: probability weight, narrative, key assumptions, ECL impact"),
+  ("S7", "Downside scenario: probability weight, narrative, key assumptions, ECL impact"), ("S7", "Basis of probability weights and review frequency"),
+  ("S7", "Forecast horizon versus lifetime horizon, and reversion method"), ("Ch. V", "Country risk in PD and LGD for cross-border exposures"),
+  ("Ch. V", "Unhedged foreign-currency exposure of borrowers"), ("Ch. V", "Overseas subsidiary jurisdiction, legal and enforcement risks")]),
+ ("8. Prudential floors", [("S8", "Allowance = max(model ECL, floor). Stage 1/2 floors by product category (portfolio or account level per policy); Stage 3 floors at account level; off-balance-sheet floors after CCF. Confirm implementation")]
+  + [("S8.1", f"{n}: Stage 1 floor {a}, Stage 2 floor {b}. Enter bank portfolio mapped") for n, a, b in FLOORS]
+  + [("S8.1", "Product category assigned at origination, reclassified only on material change; gold loans kept as gold loans. Assignment rules"),
+     ("S8.2", "Stage 3 floors by time in Stage 3 (secured / unsecured): 0-1y 25% / 40%; 1-2y 40% / 100%; 2-3y 55% / 100%; 3-4y 75% / 100%; over 4y 100% / 100%. Implementation"),
+     ("S8.2", "Lower-risk Stage 3 ladder (term-deposit loans, gold loans, state government): 10% / 25%, 20% / 100%, 30% / 100%, 40% / 100%, 100% / 100%. Implementation"),
+     ("S8.2", "Unsecured retail loans Stage 3: 25% in year 1, 100% after. Implementation"), ("S8.2", "Additional 5% provision for wilful defaulters over computed ECL"),
+     ("S8.2", "Stage 3 collateral above Rs 7.5 crore valued at classification and at least every 2 years; stock annually")]),
+ ("9. Overlays and other provisions", [
+  ("Ch. III", "Management overlay: trigger, quantification, approval, expiry (general provision)"), ("Ch. III", "Default loss guarantee cover considered in ECL? N/A or describe"),
+  ("Ch. III", "Utilisation of floating provisions / countercyclical buffer"), ("Ch. III", "Reserve for exchange rate fluctuation on forex-linked NPAs"),
+  ("Capital", "Capital treatment: Stage 3 specific provision, Stage 1 and 2 general provision")]),
+ ("10. EIR, POCI and income recognition", [
+  ("Ch. IV", "EIR inputs: integral fees, transaction costs, premiums and discounts; excluding expected credit losses"), ("Ch. IV", "Floating-rate loans: EIR re-estimation on benchmark change"),
+  ("Ch. IV", "New loans from 1 April 2027 at EIR"), ("Ch. IV", "Migration plan for loans outstanding at 31 March 2027 (complete by 31 March 2030)"),
+  ("Ch. IV", "POCI: credit-adjusted EIR, lifetime ECL, only cumulative changes recognised"), ("Ch. IV", "Stage 3 and POCI income on cash basis, no accrual"),
+  ("Ch. IV", "Resumption of accrual after upgrade")]),
+ ("11. Transition arrangements", [
+  ("Transition", "Day 1 fair valuation of the loan portfolio at 1 April 2027 (difference to opening retained earnings)"),
+  ("Transition", "Transitional adjustment = max(0, ECL at 1 April 2027 minus IRAC provisions at 31 March 2027). Amount"),
+  ("Transition", "CET1 add-back, net of tax: 4/5 in FY2027-28, 3/5, 2/5, 1/5, nil from FY2031-32. Elected schedule"),
+  ("Transition", "Shorter transition period chosen? If yes, details"), ("Transition", "Parallel IRACP reporting until 31 December 2027")]),
+ ("12. Implementation and automation", [
+  ("Annex 3", "System architecture and platform"), ("Annex 3", "Straight-through processing of staging, upgrades and downgrades"),
+  ("Annex 3", "Automation of SICR, ECL computation, income recognition and reversals"), ("Annex 3", "Manual override: two-level authorisation, delegation, audit trail"),
+  ("Annex 3", "Exception logs retained at least 3 years"), ("Annex 3", "Version control, change management and release testing"), ("Annex 3", "Code repository and run book reference")]),
+ ("13. Monitoring, limitations and change control", [
+  ("Ch. V", "Monitoring metric: stage migration rates (frequency, threshold, action)"), ("Ch. V", "Monitoring metric: PD back-test and stability"),
+  ("Ch. V", "Monitoring metric: LGD and EAD realised versus estimate"), ("Ch. V", "Monitoring metric: coverage ratio by stage"),
+  ("Ch. V", "Limitations and assumptions: impact and mitigant (one line each)"), ("Ch. V", "Triggers for recalibration, redevelopment or retirement")]),
+ ("14. Reporting and disclosure", [
+  ("Ch. VI", "First quarterly ECL report due 30 June 2027: owner and status"), ("Ch. VI", "Parallel IRACP quarterly reports until 31 December 2027"),
+  ("Ch. VI", "First annual ECL report with comparatives, 31 March 2028"), ("Annex 4", "Roll-forward of allowance by stage and instrument type"),
+  ("Annex 4", "Credit-quality tables: gross, ECL, net by stage and product"), ("Annex 4", "SICR criteria and segmentation submitted to RBI quarterly"),
+  ("Annex 4", "Macroeconomic scenario assumptions submitted to RBI"), ("Annex 4", "Transitional arrangement impact on capital and leverage ratios")]),
+ ("15. Open issues, deviations and sign-off", [
+  ("S15", "Issue or deviation from the Directions: impact, owner, due date (one line each)"),
+  ("S15", "Sign-off: model developer, model owner, Head of Credit Risk, Chief Risk Officer (names and dates)")]),
 ]
+
+TESTS = [("V1", "Governance", "Inventory, tiering, policy approval review", "Document review"), ("V2", "Data", "Completeness, accuracy, reconciliation to ledger", "Re-performance"),
+ ("V3", "Staging", "Stage 3 to NPA register reconciliation", "Full population match"), ("V4", "SICR", "Back-test of SICR triggers", "Default rates by stage"),
+ ("V5", "SICR", "Review of presumption rebuttals", "Sample testing"), ("V6", "PD", "Discriminatory power", "Gini, KS, AUC"),
+ ("V7", "PD", "Calibration and 12-month back-test", "Binomial or Hosmer-Lemeshow"), ("V8", "PD", "Stability", "PSI, rating migration"),
+ ("V9", "LGD", "Realised versus estimated LGD", "Back-test by segment"), ("V10", "EAD", "CCF and utilisation back-test", "Realised versus estimated"),
+ ("V11", "Scenarios", "Reasonableness and weights", "Challenge and sensitivity"), ("V12", "Floors", "Floor application", "Independent recomputation"),
+ ("V13", "Output", "ECL recomputation", "Sample re-performance"), ("V14", "Controls", "IT, STP and audit trail", "Walkthrough and testing"),
+ ("V15", "Reporting", "Roll-forward and disclosure tie-out", "Reconciliation")]
+MATERIALS = ["Development document", "Source code and run book", "Input data extracts and data dictionary", "Previous validation report and open findings",
+ "Board-approved ECL policy and SICR parameter approval", "Macroeconomic scenario pack"]
+T = "Result, evidence and rating: "
+
 VAL = [
- ("Independence and governance", [
-  ("Ch. V", "Validator independence from developers; three-line model risk structure; validation frequency by risk tier."),
-  ("Ch. V", "Third-party / vendor models: documentation access and RBI supervisory evaluation rights.")]),
- ("Conceptual soundness and data", [
-  ("Ch. V", "Review of methodology, assumptions and limitations against the Development document."),
-  ("Ch. III / V", "Data completeness, accuracy, representativeness; treatment of missing data and proxies.")]),
- ("Staging and SICR validation", [
-  ("Para 26-33", "Back-test SICR triggers; stability of stage migrations; sample review of rebuttals of the 30-day / 60-day presumption."),
-  ("Ch. II", "Reconciliation of Stage 3 population to NPA register at borrower level.")]),
- ("PD, LGD and EAD performance", [
-  ("Ch. V", "Back-testing and benchmarking of 12-month and lifetime PD, LGD and EAD / CCF; discriminatory power and calibration."),
-  ("Ch. III", "Use of 0.03% PD floor and 65% / 70% LGD backstops; sensitivity analysis.")]),
- ("Scenarios and overlays", [
-  ("Ch. III / V", "Reasonableness of scenarios, probability weights and macro linkage; overlay approvals and expiry."),
-  ("Ch. III", "Management overlays and floating-provision utilisation.")]),
- ("Floors, reconciliation and outputs", [
-  ("Ch. III", "Independent recomputation of ECL for a sample; correct application of Stage 1-3 floors."),
-  ("Ch. VI, Annex 4", "Roll-forward of allowances by stage; credit-quality tables; disclosure completeness.")]),
- ("Controls, reporting and sign-off", [
-  ("Annex 3", "System controls, audit trail, STP and exception logs."),
-  ("Reporting", "Quarterly ECL reporting from 30 June 2027 and parallel IRACP reporting until 31 December 2027 are supported."),
-  ("Ch. V", "Findings, severity, remediation owner and date; overall validation conclusion and sign-off.")]),
+ ("1. Independence, scope and materials", [
+  ("Ch. V", "Validators are independent of developers and model owners. Confirm and state reporting line"),
+  ("Ch. V", "Validation covers staging, SICR, PD, LGD, EAD, scenarios, floors, overlays, EIR / POCI, disclosures. Confirm coverage"),
+  ("Ch. V", "Third-party model: documentation, code and data access obtained (or N/A)"), ("S1", "Items out of scope and reason")]
+  + [("S1", f"Material received: {m}. Version, date, complete?") for m in MATERIALS]),
+ ("2. Validation plan and test inventory", [(i, f"{a}: {t} (method: {m}). Acceptance threshold, result, rating") for i, a, t, m in TESTS]),
+ ("3. Governance and inventory review", [
+  ("Ch. V", "Model in central inventory with owner, developer, tier, interdependencies, validation status"), ("Ch. V", "Board-approved ECL policy and oversight committee with CFO and CRO"),
+  ("Ch. V", "Three-line responsibilities defined and operating"),
+  ("Ch. V", "Lifecycle documented: development, pre-implementation validation, implementation, monitoring, independent validation, recalibration or retirement"),
+  ("Ch. V", "Reporting to Board or Audit Committee on ECL model risk")]),
+ ("4. Data validation", [
+  ("V2", "Source-to-model reconciliation to general ledger"), ("V2", "Completeness of accounts, including temporary overdrafts"),
+  ("V2", "Accuracy of DPD, limits, ratings, collateral fields"), ("V2", "History length and representativeness for PD, LGD, EAD"),
+  ("V2", "Treatment of missing data, outliers and proxies"), ("V2", "Data lineage documented end to end")]),
+ ("5. Conceptual soundness", [
+  ("Ch. II", "Default definition: default equals NPA, applied at borrower level"), ("Ch. III", "Staging logic: Stage 3 first, then SICR for Stage 2, else Stage 1; Stage 2 at facility level"),
+  ("Ch. III", "PD methodology: model form, 12-month and lifetime PD, TTC to PIT conversion, 0.03% floor on 12-month PD"),
+  ("Ch. III", "LGD methodology: recovery and cure logic, discounting, 65% / 70% backstop, 30% for eligible cash-like collateral"),
+  ("Ch. III", "EAD and CCF: undrawn limits, no netting of mitigants from EAD"), ("Ch. III", "ECL formula: PD x LGD x EAD x discount factor, probability-weighted"),
+  ("Annex 2", "Simplified approach: provision matrix for trade and lease receivables, lifetime ECL"), ("Ch. V", "Assumptions and limitations documented, reasonable, with compensating controls")]),
+ ("6. Staging and SICR validation", [
+  ("V3", "Stage 3 reconciliation to NPA register at borrower level, including contagion across a borrower's facilities"), ("V3", "Re-perform 90-day, out-of-order and drawing-power triggers on a sample"),
+  ("Para 30", "SICR parameters and thresholds are board approved and applied consistently to similar exposures"),
+  ("Para 33", "30-day and 60-day presumptions: confirm automated flagging; test rebuttal sample for documented evidence"),
+  ("V4", "SICR back-test: default rates of Stage 1 versus Stage 2; does SICR lead default?"), ("V4", "Stage migration matrix, volatility, cure and re-default behaviour"),
+  ("Ch. III", "Collective assessment: segment homogeneity and common risk characteristics"),
+  ("Ch. III", "Upgrade rules: Stage 3 to 1 or 2; restructured above Rs 25 crore; MSME below Rs 25 crore"),
+  ("Ch. III", "Carve-outs: SLR, central government and zero risk-weight exposures held in Stage 1 correctly"),
+  ("Transition", "Accounts NPA at 31 March 2027 not upgraded solely because of the framework change")]),
+ ("7. PD validation", [
+  ("V6", "Rank ordering: Gini / AUC / KS and thresholds"), ("V7", "12-month calibration: predicted versus observed default rate by grade and segment"),
+  ("V7", "Lifetime PD term structure: back-test of cumulative default curves"), ("V8", "Population and characteristic stability (PSI)"),
+  ("Ch. III", "TTC to PIT conversion: reasonableness against the macro cycle"), ("Ch. V", "Benchmarking against external ratings or an alternative model"),
+  ("Ch. III", "Floor application: 12-month PD not below 0.03%"), ("Ch. III", "Origination PD stored and used consistently for SICR")]),
+ ("8. LGD validation", [
+  ("V9", "Realised versus estimated LGD by segment and collateral type"), ("V9", "Recovery cash flows and cure rates re-derived from workout data"),
+  ("V9", "Discount rate and timing consistent with EIR / policy"),
+  ("Ch. III", "Collateral valuation and haircuts: sample valuations; Stage 3 above Rs 7.5 crore valued at classification and at least every 2 years; stock annually"),
+  ("Ch. III", "Backstop usage: 65% secured / 70% unsecured only where data are insufficient"),
+  ("Ch. III", "30% LGD category only for eligible collateral (cash, gold, government securities, LIC policies, KVP, NSC)"), ("Ch. V", "Downturn conditions reflected where relevant")]),
+ ("9. EAD and CCF validation", [
+  ("V10", "EAD for amortising, revolving and bullet products: re-perform on a sample"), ("V10", "CCF for undrawn and off-balance-sheet items: back-test realised drawdown at default"),
+  ("Ch. III", "No netting of credit risk mitigants: confirm in code and output"), ("Ch. III", "Guarantees devolved and turned NPA: Stage 3 floor applied without CCF")]),
+ ("10. Forward-looking information and scenarios", [
+  ("V11", "Scenario set: at least base, upside, downside with consistent narratives"), ("V11", "Probability weights: basis, documentation, governance approval"),
+  ("V11", "Macro-to-PD / LGD linkage: significance, sign and lag reasonableness"), ("V11", "Lifetime horizon beyond forecasts: reversion method documented and reasonable"),
+  ("V11", "Sensitivity: ECL change under shifted weights and shocks"), ("Ch. V", "Country risk, unhedged foreign-currency exposure and overseas subsidiary risks reflected in PD and LGD")]),
+ ("11. Floors and output reasonableness", [
+  ("V12", "Product category assignment correct at origination; gold loans kept as gold loans"), ("V12", "Stage 1 and 2 floors: allowance not below product floor at the applied level"),
+  ("V12", "Stage 3 floors: time-in-stage bands at account level, secured and unsecured split"), ("V12", "Floors on off-balance-sheet items applied after CCF"),
+  ("V12", "Wilful defaulters: additional 5% over ECL"), ("V13", "Independent ECL recomputation: sample size and tolerance"),
+  ("V13", "Coverage by stage: trend and peer reasonableness"), ("V13", "Period movement: drivers of change in allowance")]),
+ ("12. Overlays and other provisions", [
+  ("Ch. III", "Management overlays: trigger, quantification, approval, expiry documented; general provision"), ("Ch. III", "DLG: integral to contract, not recognised separately, reduced on invocation"),
+  ("Ch. III", "Floating provisions / countercyclical buffer: utilisation approved and disclosed"), ("Ch. III", "Forex-linked NPA reserve: revaluation gain provided in full"),
+  ("Capital", "Capital classification: Stage 3 specific, Stage 1 and 2 general provision")]),
+ ("13. EIR, POCI and income recognition", [
+  ("Ch. IV", "EIR calculation re-performed on a sample; integral fees and costs included, expected credit losses excluded"), ("Ch. IV", "Floating-rate EIR re-estimation on benchmark change"),
+  ("Ch. IV", "Migration plan: loans outstanding at 31 March 2027 on track for EIR by 31 March 2030"), ("Ch. IV", "POCI: credit-adjusted EIR; only cumulative lifetime ECL changes recognised"),
+  ("Ch. IV", "Stage 3 and POCI income on cash basis; accrual resumes after upgrade")]),
+ ("14. Implementation and IT controls", [
+  ("V14", "Code review: code matches Development document; no undocumented logic"), ("V14", "User acceptance and parallel run against independent replication"),
+  ("Annex 3", "Straight-through processing of staging, upgrades and downgrades"), ("Annex 3", "Manual override control: two-level authorisation, delegation, audit trail"),
+  ("Annex 3", "Exception logs kept at least 3 years"), ("Annex 3", "Access, change and release management: segregation of duties, version control")]),
+ ("15. Reporting, disclosure and transition", [
+  ("V15", "Allowance roll-forward by stage and instrument type: opening to closing"), ("V15", "Credit-quality tables tie to ledger"),
+  ("Annex 4", "Regulatory submissions: SICR criteria and segmentation (quarterly); macro scenarios to RBI"),
+  ("Ch. VI", "Reporting calendar: first quarterly report 30 June 2027; parallel IRACP until 31 December 2027; first annual 31 March 2028"),
+  ("Transition", "Transitional adjustment recomputed: max(0, ECL at 1 April 2027 minus IRAC provisions at 31 March 2027)"),
+  ("Transition", "CET1 add-back schedule 4/5, 3/5, 2/5, 1/5 for FY2027-28 to FY2030-31, net of tax"),
+  ("Transition", "Day 1 fair valuation adjusted to opening retained earnings, not profit and loss")]),
+ ("16. Findings log", [("F1", "Finding: area, description, severity (High / Medium / Low), impact on ECL, management response, owner, due date, status"),
+  ("F2", "Finding (as above)"), ("F3", "Finding (as above)")]),
+ ("17. Conclusion and sign-off", [
+  ("S17", "Overall conclusion: fit for use / fit for use with conditions / not fit for use"), ("S17", "Conditions or restrictions on use"), ("S17", "Next validation due"),
+  ("S17", "Summary of key strengths and weaknesses"), ("S17", "Sign-off: lead validator, Head of Model Validation, model owner acknowledgement, Chief Risk Officer")]),
 ]
 
 SKEL = {"dev": ("d", "Development", "ECL Model Development Document", DEV),
@@ -163,11 +302,10 @@ def clear_all():
     st.session_state.ver = {k: v + 1 for k, v in st.session_state.ver.items()}
 
 # ---------------------------------------------------------------- Gemini
-PROMPT = """You are a senior model-risk documentation specialist at an Indian bank. Write the %s DOCUMENT for an ECL model under the RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026 dated 27 April 2026 (effective 1 April 2027).
-The SKELETON is the regulation-based structure. Keep every section and every requirement, tighten wording where useful, and add rows wherever the Directions need more coverage (staging, SICR, PD/LGD/EAD, scenarios, floors, EIR/POCI, disclosures, model risk management, automation, transition). Do not invent paragraph numbers beyond those given; otherwise cite chapter or annex names.
-For each row, "resp" is the response drawn only from the source code: name the function or constant used and its values or formula. If the code gives no evidence, resp must be exactly "NOT EVIDENCED IN CODE - owner to complete". For the validation document, resp says what a validator can test in the code and flags gaps or deviations from the Directions. Max 90 words per resp.
-Return ONLY JSON: {"sections": [{"title": "...", "rows": [{"ref": "...", "req": "...", "resp": "..."}]}]}
-SKELETON:
+PROMPT = """You are a senior model-risk documentation specialist at an Indian bank. Complete the %s DOCUMENT for an ECL model under the RBI (Commercial Banks - Asset Classification, Provisioning and Income Recognition) Directions, 2026 dated 27 April 2026.
+ROWS maps each row id to the regulatory requirement to answer. For every id write the response from the source code only: name the function or constant used and its values or formula. If the code gives no evidence, write exactly "NOT EVIDENCED IN CODE - owner to complete". For the validation document, say what a validator can test in the code and flag gaps or deviations from the Directions. At most 60 words per response.
+Return ONLY JSON: {"responses": {"<row id>": "<text>"}} covering every id.
+ROWS:
 %s
 CODE:
 %s"""
@@ -179,20 +317,23 @@ def code_text(up):
         raw = "\n\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
     return raw[:60000]
 
+def blank_doc(kind):
+    k, tab, title, secs = SKEL[kind]
+    return mk(k, tab, title, secs)
+
 def build_doc(kind, code):
     from google import genai
     from google.genai import types
-    k, tab, title, secs = SKEL[kind]
-    skel = [{"title": t, "rows": [{"ref": r, "req": q} for r, q in rows]} for t, rows in secs]
+    d = blank_doc(kind)
+    rows = {r["id"]: r["req"] for s in d["sections"] for r in s["rows"]}
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta"))
-    out = client.models.generate_content(model=MODEL, contents=PROMPT % (LABEL[kind].upper(), json.dumps(skel, indent=1), code),
+    out = client.models.generate_content(model=MODEL, contents=PROMPT % (LABEL[kind].upper(), json.dumps(rows, indent=0), code),
         config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2))
-    res = json.loads(out.text)["sections"]
-    if not res: raise ValueError("Gemini returned no sections")
-    d = mk(k, tab, title, [(s["title"], [(r.get("ref", ""), r.get("req", "")) for r in s["rows"]]) for s in res])
-    for si, s in enumerate(res):
-        for ri, r in enumerate(s["rows"]):
-            d["sections"][si]["rows"][ri]["resp"] = str(r.get("resp", ""))
+    res = json.loads(out.text)
+    res = res.get("responses", res)
+    for s in d["sections"]:
+        for r in s["rows"]:
+            r["resp"] = str(res.get(r["id"], ""))
     return d
 
 with st.sidebar:
@@ -295,7 +436,9 @@ for tab, k in zip(tabs[:2], ("dev", "val")):
     with tab:
         d = st.session_state.docs[k]
         if d is None:
-            st.info(f"No {LABEL[k].lower()} document yet. Upload model code in the sidebar, then click 'Create {LABEL[k]} document'.")
+            st.info(f"No {LABEL[k].lower()} document yet. Upload model code in the sidebar and click 'Create {LABEL[k]} document', or start from the blank template.")
+            if st.button(f"Open blank {LABEL[k].lower()} template", key=f"bl_{k}"):
+                st.session_state.docs[k] = blank_doc(k); st.session_state.ver[k] += 1; st.rerun()
         else:
             v = _C(doc=d, key=f"c_{k}_{st.session_state.ver[k]}", default=None)
             if v: st.session_state.docs[k] = v
