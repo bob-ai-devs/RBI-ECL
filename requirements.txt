@@ -8,3 +8,5 @@ scipy
 plotly
 matplotlib
 openpyxl
+google-genai>=1.0
+python-docx>=1.1
