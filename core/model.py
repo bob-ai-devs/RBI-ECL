@@ -17,7 +17,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 PLACEHOLDER = re.compile(r"\[[^\]]*\]")
 
 KINDS = {"development": "Development Document", "validation": "Validation Document"}
-DEPTHS = {"brief": "Brief", "advanced": "Advanced"}
+DEPTHS = {"brief": "Standard", "advanced": "Advanced"}   # "brief" is the internal key of the Standard templates
 PREFIX = {"development": "dev", "validation": "val"}
 
 
