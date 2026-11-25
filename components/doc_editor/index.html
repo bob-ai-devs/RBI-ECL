@@ -408,7 +408,7 @@ body.hide-guidance .guidance{display:none}
   /* ---------------- build ---------------- */
   function buildAll() {
     var root = document.getElementById("doc"); root.innerHTML = "";
-    document.getElementById("brandTitle").textContent = S.doc.title + " · " + (S.doc.depth === "brief" ? "Brief" : "Advanced");
+    document.getElementById("brandTitle").textContent = S.doc.title + " · " + (S.doc.depth === "brief" ? "Standard" : "Advanced");
     var ban = h("div", { class: "banner" }, h("small", null, "BANK OF BARODA · MODEL RISK MANAGEMENT · " + (S.doc.kind || "").toUpperCase()),
       h("h1", null, S.doc.title), h("p", null, S.doc.subtitle || ""));
     root.appendChild(ban);
