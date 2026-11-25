@@ -5,7 +5,7 @@ CSS = f"""
 <style>
 .block-container{{padding-top:1.2rem;max-width:1500px}}
 [data-testid="stSidebar"]{{background:linear-gradient(180deg,{NAVY} 0%,#0c3277 100%)}}
-[data-testid="stSidebar"] *{{color:#fff}}
+[data-testid="stSidebar"] *{{color:#888}}
 [data-testid="stSidebar"] .stButton>button,[data-testid="stSidebar"] .stDownloadButton>button{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.35);color:#fff}}
 [data-testid="stSidebar"] .stButton>button:hover{{background:{GOLD};color:{NAVY};border-color:{GOLD}}}
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{{background:rgba(255,255,255,.08);border:1px dashed {GOLD}}}
