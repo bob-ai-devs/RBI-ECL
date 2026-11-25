@@ -4,12 +4,11 @@ NAVY, ORANGE, VERMILION, RED, GOLD, CREAM, INK = "#0A2A66", "#F26B21", "#E4402A"
 CSS = f"""
 <style>
 .block-container{{padding-top:1.2rem;max-width:1500px}}
-[data-testid="stSidebar"]{{background:linear-gradient(180deg,{NAVY} 0%,#0c3277 100%)}}
-[data-testid="stSidebar"] *{{color:#888}}
-[data-testid="stSidebar"] .stButton>button,[data-testid="stSidebar"] .stDownloadButton>button{{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.35);color:#fff}}
-[data-testid="stSidebar"] .stButton>button:hover{{background:{GOLD};color:{NAVY};border-color:{GOLD}}}
-[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{{background:rgba(255,255,255,.08);border:1px dashed {GOLD}}}
-[data-testid="stSidebar"] textarea,[data-testid="stSidebar"] input{{color:{INK}!important}}
+[data-testid="stSidebar"]{{background:{CREAM};border-right:4px solid {ORANGE}}}
+[data-testid="stSidebar"] h1,[data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3,[data-testid="stSidebar"] h4{{color:{NAVY}}}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]{{background:#fff;border:1px dashed {ORANGE}}}
+[data-testid="stSidebar"] .stButton>button,[data-testid="stSidebar"] .stDownloadButton>button{{background:#fff;color:{NAVY};border:1px solid {ORANGE};font-weight:600}}
+[data-testid="stSidebar"] .stButton>button:hover,[data-testid="stSidebar"] .stDownloadButton>button:hover{{background:{ORANGE};color:#fff;border-color:{ORANGE}}}
 .hero{{background:linear-gradient(115deg,{VERMILION} 0%,{ORANGE} 58%,{GOLD} 100%);border-bottom:6px solid {NAVY};border-radius:14px;padding:22px 30px;color:#fff;margin-bottom:14px;position:relative;overflow:hidden}}
 .hero:after{{content:"";position:absolute;right:-40px;top:-60px;width:260px;height:260px;border-radius:50%;background:rgba(255,255,255,.12)}}
 .hero small{{letter-spacing:.16em;font-weight:700;font-size:11px;opacity:.95}}
