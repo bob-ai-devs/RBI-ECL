@@ -1,0 +1,3686 @@
+{
+ "kind": "validation",
+ "depth": "brief",
+ "title": "ECL Model Validation Document (MVD)",
+ "subtitle": "Concise independent validation record for ECL models under the RBI ECL Directions, 2026 (IFRS 9 / Ind AS 109-aligned)",
+ "howto": "Replace everything in [square brackets]; pick one option where the bracket lists several separated by “/”. Rate each test with the scale in the Rating Scales appendix and record every finding in the findings register. Delete each Section goal box before issuing the report.",
+ "footer": "ECL Model Validation Document – Template  |  Confidential – internal use only",
+ "sections": [
+  {
+   "title": "0. Validation Control and Sign-Off",
+   "goal": "Identify the model, the validation, the validators and the approval status in one place so MRM, audit and the supervisor can trace the work. Complete once per report.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "Validation metadata"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Metadata field",
+      "Entry"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Validation ID and title",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., VAL-ECL-RET-MTG-2027-01 – Independent validation of Retail Residential Mortgage ECL Model",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model ID and name (as in the development document)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., ECL-RET-MTG-001 – Retail Residential Mortgage ECL Model",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Accounting and regulatory regime",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "RBI ECL Directions 2026 (Ind AS 109-aligned) / other, if group-consolidated",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Validation type",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Initial / Periodic annual / Ad hoc after material change / Pre-transition (before 1 April 2027)",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Validation scope",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Governance / conceptual soundness / data / implementation / outcomes analysis / forward-looking",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model tier / materiality",
+        "f": 0
+       },
+       {
+        "v": "[Tier 1 (high) / Tier 2 (medium) / Tier 3 (low)] – rationale: [text]",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model owner (business)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name, title, department",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Lead developer(s)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name(s), team",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Independent validator(s) and team",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name(s), team, reporting line",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Independence confirmation",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Confirm that validators did not develop, own or use the model and report outside the model owner's line",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Development document version and date reviewed",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "v1.0 – DD-MMM-YYYY",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Reference (data) date and validation window",
+        "f": 0
+       },
+       {
+        "v": "[DD-MMM-YYYY]; [Mon-YYYY to Mon-YYYY]",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Validation report version and date",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "v1.0 – DD-MMM-YYYY",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Overall validation opinion",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "Version history and approvals"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Version",
+      "Date",
+      "Author / approver",
+      "Role",
+      "Change summary and sign-off status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "v0.1",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator",
+        "f": 1
+       },
+       {
+        "v": "Lead validator",
+        "f": 0
+       },
+       {
+        "v": "Initial draft for validation-team review",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "v0.9",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Head of validation",
+        "f": 1
+       },
+       {
+        "v": "Head of validation",
+        "f": 0
+       },
+       {
+        "v": "Reviewed; shared with model owner for factual accuracy",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "v1.0",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Head of validation",
+        "f": 1
+       },
+       {
+        "v": "Head of validation",
+        "f": 0
+       },
+       {
+        "v": "Issued to model owner and ECL steering committee",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ]
+    }
+   ]
+  },
+  {
+   "title": "1. Executive Summary and Overall Opinion",
+   "goal": "Give senior management, the ECL steering committee and the supervisor a one-page view of the validation scope, the rating by area, the key findings and the opinion on fitness for use.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "1.1 Purpose, scope and materials reviewed"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "This Model Validation Document (MVD) records the independent validation of [Model name] ([Model ID]), used to estimate Expected Credit Loss (ECL) under the Reserve Bank of India (Commercial Banks – Asset Classification, Provisioning and Income Recognition) Directions, 2026 (issued 27 April 2026; effective 1 April 2027). The validation covers [scope] and was performed by [validation team] between [start date] and [end date].",
+      "f": 1
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Item reviewed",
+      "Version / reference",
+      "Provided by",
+      "Date",
+      "Limitations or gaps"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Model development document",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Version, ID or link",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name / team",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Gaps in material or access",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model code and repository snapshot",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Version, ID or link",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name / team",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Gaps in material or access",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Data extracts and lineage evidence",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Version, ID or link",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name / team",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Gaps in material or access",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Version, ID or link",
+      "Name / team",
+      "DD-MMM-YYYY",
+      "Gaps in material or access"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "1.2 Validation approach and rating by area"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Validation area",
+      "Procedures performed",
+      "Rating",
+      "Key observation"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Governance and regulatory alignment",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Conceptual soundness and methodology",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Data and inputs",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Implementation and code",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Outcomes analysis",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Forward-looking and scenarios",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Floors, transition and overlays",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Monitoring, model risk and use",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Procedures performed (tests, re-performance, review of evidence)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Most important observation for this area",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Procedures performed (tests, re-performance, review of evidence)",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+      "Most important observation for this area"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "1.3 Overall opinion and conditions on use"
+    },
+    {
+     "t": "para",
+     "label": "Overall opinion:",
+     "c": {
+      "v": "",
+      "h": "State the opinion and its basis in 3–5 sentences: is the model fit for ECL provisioning under the Directions?",
+      "f": 1
+     }
+    },
+    {
+     "t": "para",
+     "label": "Conditions on model use:",
+     "c": {
+      "v": "",
+      "h": "List any restriction, compensating control or overlay that must apply until findings are closed",
+      "f": 1
+     }
+    },
+    {
+     "t": "h",
+     "text": "1.4 Findings summary"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Severity",
+      "Findings raised",
+      "Open",
+      "Closed",
+      "Overdue"
+     ],
+     "rows": [
+      [
+       {
+        "v": "High",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Medium",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Low",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Total",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Count",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Count",
+      "Count",
+      "Count",
+      "Count"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "2. Regulatory Alignment and Governance Assessment",
+   "goal": "Test that every requirement of the Directions maps to documented and evidenced treatment, and that governance and independence meet the bank's model risk policy. Fill paragraph numbers from the final Directions (27 April 2026) and the bank's compliance matrix.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "2.1 Review of the compliance matrix"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Requirement area",
+      "Directions para",
+      "Treatment in development document",
+      "Validator assessment",
+      "Rating",
+      "Comment / evidence"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Staging framework (Stage 1 / 2 / 3)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "SICR determination at each reporting date",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "NPA classification (extant norms retained)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Lifetime ECL and expected life",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Probability-weighted scenarios",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "EIR and discounting",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Prudential floors, Stage 1 and Stage 2 (product-based)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Transition arrangements",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "para",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "MDD section and summary of the treatment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the treatment adequate and complete?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Compliant / Partially compliant / Gap",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence or reasoning",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "para",
+      "MDD section and summary of the treatment",
+      "Is the treatment adequate and complete?",
+      "Compliant / Partially compliant / Gap",
+      "Evidence or reasoning"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "2.2 Governance and independence"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Governance element",
+      "Expectation",
+      "Evidence reviewed",
+      "Assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Board and committee oversight",
+        "f": 0
+       },
+       {
+        "v": "Policy, methodology and results approved at the designated forum",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Documents, minutes or approvals reviewed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "ECL policy and model risk policy",
+        "f": 0
+       },
+       {
+        "v": "Approved, current and consistent with the Directions",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Documents, minutes or approvals reviewed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model inventory and tiering",
+        "f": 0
+       },
+       {
+        "v": "Model recorded with owner, tier and validation due date",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Documents, minutes or approvals reviewed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Independence of validation",
+        "f": 0
+       },
+       {
+        "v": "Validators independent of development and of model use",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Documents, minutes or approvals reviewed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "Documents, minutes or approvals reviewed",
+      "Validator assessment",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "3. Conceptual Soundness and Methodology Review",
+   "goal": "Judge whether each methodological choice is theoretically sound, consistent with the Directions and supported by evidence. Challenge the developer; do not merely restate the development document.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "3.1 Scope, default, staging and SICR"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Test",
+      "Expectation",
+      "Evidence and analysis",
+      "Assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Default definition and NPA alignment",
+        "f": 0
+       },
+       {
+        "v": "Default equals NPA classification under Chapter II of the Directions and is used consistently for PD, LGD and EAD",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Cure and probation rules",
+        "f": 0
+       },
+       {
+        "v": "Probation documented; no re-ageing without a basis",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "SICR relative and absolute triggers",
+        "f": 0
+       },
+       {
+        "v": "Thresholds calibrated on the bank's data with evidence of discriminatory power",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Days-past-due backstop",
+        "f": 0
+       },
+       {
+        "v": "30 DPD rebuttable presumption applied and rebuttals documented",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Qualitative triggers",
+        "f": 0
+       },
+       {
+        "v": "Watchlist, early-warning and restructuring signals are captured",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Stage movement and symmetry",
+        "f": 0
+       },
+       {
+        "v": "Cure and migration rules are symmetric and tested",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "Evidence reviewed and analysis performed",
+      "Validator assessment and challenge",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "3.2 Probability of default (PD)"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Test",
+      "Expectation",
+      "Evidence and analysis",
+      "Assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Segmentation and homogeneity",
+        "f": 0
+       },
+       {
+        "v": "Segments differ materially in default rate; no gaps or overlaps",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model form and estimation",
+        "f": 0
+       },
+       {
+        "v": "Method suits the data; fit, significance and stability are evidenced",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Variable selection and signs",
+        "f": 0
+       },
+       {
+        "v": "Information value, VIF and sign checks passed; economic intuition holds",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Point-in-time conversion",
+        "f": 0
+       },
+       {
+        "v": "TTC-to-PiT method is reasonable and linked to the macro satellite model",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "Evidence reviewed and analysis performed",
+      "Validator assessment and challenge",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "3.3 Loss given default (LGD)"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Test",
+      "Expectation",
+      "Evidence and analysis",
+      "Assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Workout LGD construction",
+        "f": 0
+       },
+       {
+        "v": "Recoveries discounted at EIR; costs included; cash flows complete",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Cure and incomplete workouts",
+        "f": 0
+       },
+       {
+        "v": "Censoring handled with recovery curves or tested exclusions",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Downturn add-on removal",
+        "f": 0
+       },
+       {
+        "v": "ECL LGD is point-in-time and unbiased",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "Evidence reviewed and analysis performed",
+      "Validator assessment and challenge",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "3.4 Exposure at default (EAD), prepayment and expected life"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Test",
+      "Expectation",
+      "Evidence and analysis",
+      "Assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Amortising loans and prepayment",
+        "f": 0
+       },
+       {
+        "v": "Schedule, accrued interest and CPR are reasonable",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Revolving and undrawn exposures (CCF)",
+        "f": 0
+       },
+       {
+        "v": "CCF by utilisation and delinquency, tested on history",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Evidence reviewed and analysis performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment and challenge",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "Evidence reviewed and analysis performed",
+      "Validator assessment and challenge",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "4. Data and Input Validation",
+   "goal": "Confirm that the data behind the model is complete, accurate, representative and reconciled. Re-perform the sample waterfall and test the lineage from source tables to the modelling dataset.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "4.1 Data lineage and reconciliation"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Dataset",
+      "Source and owner",
+      "Test performed",
+      "Result",
+      "Exceptions and treatment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Loan and balance tape",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Source system, table and owner",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Test performed by the validator",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Exceptions and how they were treated",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Default and recovery history",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Source system, table and owner",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Test performed by the validator",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Exceptions and how they were treated",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Origination and bureau data",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Source system, table and owner",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Test performed by the validator",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Exceptions and how they were treated",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Source system, table and owner",
+      "Test performed by the validator",
+      "Result",
+      "Exceptions and how they were treated",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "4.2 Data-quality tests"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Test",
+      "Result",
+      "Treatment of exceptions",
+      "Residual impact",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Completeness (missing values)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Result and metric",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Treatment of exceptions",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Residual impact on ECL",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Accuracy and reconciliation to GL",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Result and metric",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Treatment of exceptions",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Residual impact on ECL",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Consistency across periods and systems",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Result and metric",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Treatment of exceptions",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Residual impact on ECL",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Uniqueness and keys",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Result and metric",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Treatment of exceptions",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Residual impact on ECL",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Result and metric",
+      "Treatment of exceptions",
+      "Residual impact on ECL",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "5. Implementation and Code Review",
+   "goal": "Prove that the production engine does what the development document says. Replicate the key outputs independently and review the code and its controls.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "5.1 Independent replication"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Component",
+      "Replication method",
+      "Developer value",
+      "Validator value",
+      "Variance",
+      "Tolerance",
+      "Status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Staging and SICR",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Independent code or tool used",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Absolute or %",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "e.g., 0.01%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "12-month PD",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Independent code or tool used",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Absolute or %",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "e.g., 0.01%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LGD",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Independent code or tool used",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Absolute or %",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "e.g., 0.01%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Total probability-weighted ECL",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Independent code or tool used",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Value",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Absolute or %",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "e.g., 0.01%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Independent code or tool used",
+      "Value",
+      "Value",
+      "Absolute or %",
+      "e.g., 0.01%",
+      "Within tolerance / Outside tolerance"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "5.2 Code review"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Check",
+      "Result",
+      "Comment"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Version control, release tag and access control",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Pass / Partial / Fail",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence and comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Unit tests and coverage",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Pass / Partial / Fail",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence and comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Hard-coded parameters",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Pass / Partial / Fail",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence and comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Reproducibility (seeds, input snapshots)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Pass / Partial / Fail",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Evidence and comment",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Pass / Partial / Fail",
+      "Evidence and comment"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "6. Outcomes Analysis (Quantitative Testing)",
+   "goal": "Re-perform or independently test discrimination, calibration, stability and back-testing. Thresholds below are illustrative bank-style defaults: replace them with the thresholds in the approved model risk policy.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "6.1 Discrimination and calibration"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Component and metric",
+      "Developer result",
+      "Validator result",
+      "Threshold",
+      "Status",
+      "Comment"
+     ],
+     "rows": [
+      [
+       {
+        "v": "PD: Gini / AUROC",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Development / out-of-time result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator's re-performed result",
+        "f": 1
+       },
+       {
+        "v": "Green: Gini ≥ 0.45; Amber: 0.35–0.45; Red: < 0.35",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Green / Amber / Red",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "PD: KS statistic",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Development / out-of-time result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator's re-performed result",
+        "f": 1
+       },
+       {
+        "v": "Green: KS ≥ 35%",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Green / Amber / Red",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "PD: calibration (binomial / Jeffreys)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Development / out-of-time result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator's re-performed result",
+        "f": 1
+       },
+       {
+        "v": "Observed within 95% interval of predicted",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Green / Amber / Red",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "PD: stability (PSI)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Development / out-of-time result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator's re-performed result",
+        "f": 1
+       },
+       {
+        "v": "Green: PSI < 0.10; Amber: 0.10–0.25; Red: ≥ 0.25",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Green / Amber / Red",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Comment",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LGD: R² / RMSE",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Development / out-of-time result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator's re-performed result",
+        "f": 1
+       },
+       {
+        "v": "Beats historical-average benchmark",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Green / Amber / Red",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Comment",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Development / out-of-time result",
+      "Validator's re-performed result",
+      "",
+      "Green / Amber / Red",
+      "Comment"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "6.2 Back-testing ECL against realised outcomes"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Period",
+      "Segment",
+      "Predicted ECL or loss (INR crore)",
+      "Realised loss (INR crore)",
+      "Variance (%)",
+      "Comment"
+     ],
+     "rows": [
+      [
+       {
+        "v": "",
+        "h": "Period",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Segment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Explanation of variance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Period",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Segment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Explanation of variance",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "Period",
+      "Segment",
+      "INR crore",
+      "INR crore",
+      "%",
+      "Explanation of variance"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "7. Forward-Looking and Scenario Validation",
+   "goal": "Challenge the statistical rigour and economic intuition behind each macro variable and show that scenario weighting captures the non-linearity of losses.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "7.1 Macro variables and satellite model"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Macro variable",
+      "Tests performed (stationarity, sign, lag, VIF, residuals, stability)",
+      "Result",
+      "Validator assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "",
+        "h": "Macro variable",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Tests performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Macro variable",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Tests performed",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Result",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "Macro variable",
+      "Tests performed",
+      "Result",
+      "Validator assessment",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "7.2 Scenarios and probability weights"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Scenario",
+      "Weight",
+      "Reasonableness of narrative and path",
+      "Consistency with ICAAP and stress tests",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Upside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the narrative plausible and the path coherent?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Consistent / not consistent – comment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Baseline",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the narrative plausible and the path coherent?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Consistent / not consistent – comment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Downside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the narrative plausible and the path coherent?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Consistent / not consistent – comment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Severe downside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the narrative plausible and the path coherent?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Consistent / not consistent – comment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "%",
+      "Is the narrative plausible and the path coherent?",
+      "Consistent / not consistent – comment",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "7.3 Non-linearity and sensitivity re-performance"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Sensitivity test",
+      "Developer % change",
+      "Validator re-performed % change",
+      "Variance",
+      "Status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "100% severe downside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Percentage points",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "100% upside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Percentage points",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "SICR tightening",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Percentage points",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Within tolerance / Outside tolerance",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "%",
+      "%",
+      "Percentage points",
+      "Within tolerance / Outside tolerance"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "8. Prudential Floors, Transition and Overlays",
+   "goal": "Confirm that model output becomes the booked provision correctly: floors applied, transition quantified and every post-model adjustment documented, approved and temporary.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "8.1 Prudential floors (Stage 1 and Stage 2)"
+    },
+    {
+     "t": "note",
+     "text": "Fill from the final Directions of 27 April 2026, not from the October 2025 draft."
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Product",
+      "Stage",
+      "Prescribed floor",
+      "Model ECL",
+      "Floor-adjusted provision",
+      "Validator re-performance",
+      "Floor binding?"
+     ],
+     "rows": [
+      [
+       {
+        "v": "",
+        "h": "Product",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "1 / 2",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Re-performed provision and variance",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Y / N",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "Product",
+      "1 / 2",
+      "%",
+      "INR crore",
+      "INR crore",
+      "Re-performed provision and variance",
+      "Y / N"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "8.2 Overlays and post-model adjustments (PMAs)"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Overlay ID",
+      "Reason",
+      "Amount (INR crore)",
+      "Validator assessment",
+      "Approved and documented?",
+      "Expiry / exit condition",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "OV-1",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Model limitation, data gap or emerging risk",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR crore",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Is the overlay justified and sized reasonably?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Y / N – reference",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Expiry date and exit plan",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Model limitation, data gap or emerging risk",
+      "INR crore",
+      "Is the overlay justified and sized reasonably?",
+      "Y / N – reference",
+      "Expiry date and exit plan",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "9. Monitoring, Model Risk and Use",
+   "goal": "Check that the ongoing monitoring plan can detect deterioration in time and that limitations, compensating controls and conditions on use are explicit.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "9.1 Adequacy of the monitoring plan"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Metric",
+      "Frequency in development document",
+      "Threshold adequacy",
+      "Validator assessment",
+      "Rating"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Population stability index (PSI)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Frequency",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Are the Green / Amber / Red thresholds adequate?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "PD discrimination (Gini)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Frequency",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Are the Green / Amber / Red thresholds adequate?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "PD calibration drift",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Frequency",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Are the Green / Amber / Red thresholds adequate?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LGD realised vs predicted error",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Frequency",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Are the Green / Amber / Red thresholds adequate?",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Validator assessment",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Frequency",
+      "Are the Green / Amber / Red thresholds adequate?",
+      "Validator assessment",
+      "Satisfactory / Satisfactory with recommendations / Needs improvement / Unsatisfactory"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "9.2 Limitations, compensating controls and conditions on use"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Key model limitations:",
+       "c": {
+        "v": "",
+        "h": "Limitations that matter for the ECL estimate",
+        "f": 1
+       }
+      },
+      {
+       "label": "Compensating controls required:",
+       "c": {
+        "v": "",
+        "h": "Overlays, floors, manual reviews or monitoring that must apply",
+        "f": 1
+       }
+      },
+      {
+       "label": "Restrictions on model use:",
+       "c": {
+        "v": "",
+        "h": "Portfolios, products or purposes where the model must not be used",
+        "f": 1
+       }
+      },
+      {
+       "label": "Redevelopment and recalibration triggers agreed:",
+       "c": {
+        "v": "",
+        "h": "Triggers agreed with the model owner",
+        "f": 1
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "10. Findings, Remediation and Sign-Off",
+   "goal": "Record every finding with a severity, owner and due date, state the conditions on use, and obtain the required sign-offs.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "10.1 Findings register"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "ID",
+      "Area and development-document reference",
+      "Finding",
+      "Severity",
+      "Root cause",
+      "Recommendation",
+      "Owner",
+      "Due date",
+      "Status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "F-01",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Area and MDD section",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Finding",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "High / Medium / Low",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Root cause",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Recommendation",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Open / In progress / Closed",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "F-02",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Area and MDD section",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Finding",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "High / Medium / Low",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Root cause",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Recommendation",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Open / In progress / Closed",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "F-03",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Area and MDD section",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Finding",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "High / Medium / Low",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Root cause",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Recommendation",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Open / In progress / Closed",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Area and MDD section",
+      "Finding",
+      "High / Medium / Low",
+      "Root cause",
+      "Recommendation",
+      "Name",
+      "DD-MMM-YYYY",
+      "Open / In progress / Closed"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "10.2 Validator's conclusion"
+    },
+    {
+     "t": "para",
+     "label": "Conclusion:",
+     "c": {
+      "v": "",
+      "h": "Conclusion on fitness for use, conditions that apply and the next validation date",
+      "f": 1
+     }
+    },
+    {
+     "t": "h",
+     "text": "10.3 Sign-off"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Role",
+      "Name",
+      "Date",
+      "Signature / reference"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Lead validator",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Signature or approval reference",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Head of model validation",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Signature or approval reference",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model owner (acknowledgement)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "DD-MMM-YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Signature or approval reference",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "Name",
+      "DD-MMM-YYYY",
+      "Signature or approval reference"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Appendix A – Validation Checklist",
+   "goal": "Confirm each item before the report is issued.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "table",
+     "cols": [
+      "#",
+      "Item",
+      "Required artifact or verification",
+      "Done"
+     ],
+     "rows": [
+      [
+       {
+        "v": "1",
+        "f": 0
+       },
+       {
+        "v": "Placeholders and guidance",
+        "f": 0
+       },
+       {
+        "v": "All [brackets] replaced; all Section goal boxes and italic guidance lines deleted; illustrative thresholds replaced by policy values",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "2",
+        "f": 0
+       },
+       {
+        "v": "Independence",
+        "f": 0
+       },
+       {
+        "v": "Independence confirmation signed and recorded in the control table",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "3",
+        "f": 0
+       },
+       {
+        "v": "Regulatory mapping",
+        "f": 0
+       },
+       {
+        "v": "Compliance matrix completed with Directions paragraph numbers",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "4",
+        "f": 0
+       },
+       {
+        "v": "Methodology",
+        "f": 0
+       },
+       {
+        "v": "Every component and segment challenged; ratings recorded",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "5",
+        "f": 0
+       },
+       {
+        "v": "Data",
+        "f": 0
+       },
+       {
+        "v": "Lineage, reconciliation and waterfall re-performed",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "6",
+        "f": 0
+       },
+       {
+        "v": "Replication",
+        "f": 0
+       },
+       {
+        "v": "Independent replication within tolerance, or variance explained",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "7",
+        "f": 0
+       },
+       {
+        "v": "Outcomes",
+        "f": 0
+       },
+       {
+        "v": "Discrimination, calibration, stability and back-tests completed on development and out-of-time samples",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ],
+      [
+       {
+        "v": "8",
+        "f": 0
+       },
+       {
+        "v": "Scenarios",
+        "f": 0
+       },
+       {
+        "v": "Macro paths and weights challenged; sensitivities re-performed",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": ""
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "",
+      ""
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Appendix B – Rating Scales and Glossary",
+   "goal": "Definitions used for ratings, severities and terms in this document.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "Rating scale"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Rating",
+      "Meaning"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Satisfactory",
+        "f": 0
+       },
+       {
+        "v": "Meets requirements; no material weakness",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Satisfactory with recommendations",
+        "f": 0
+       },
+       {
+        "v": "Meets requirements; improvements recommended with no effect on ECL reliability",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Needs improvement",
+        "f": 0
+       },
+       {
+        "v": "Weakness that may affect ECL reliability; remediation required within the agreed date",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Unsatisfactory",
+        "f": 0
+       },
+       {
+        "v": "Weakness that materially affects ECL reliability; model use restricted until remediated",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "Finding severity"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Severity",
+      "Meaning"
+     ],
+     "rows": [
+      [
+       {
+        "v": "High",
+        "f": 0
+       },
+       {
+        "v": "Material misstatement risk or regulatory non-compliance; remediate before next reporting date",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Medium",
+        "f": 0
+       },
+       {
+        "v": "Could affect the ECL estimate under plausible conditions; remediate within two quarters",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Low",
+        "f": 0
+       },
+       {
+        "v": "Good-practice or documentation point; remediate at next model update",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "Glossary"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Term",
+      "Meaning in this document"
+     ],
+     "rows": [
+      [
+       {
+        "v": "ECL",
+        "f": 0
+       },
+       {
+        "v": "Probability-weighted average of credit losses across scenarios",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "SICR",
+        "f": 0
+       },
+       {
+        "v": "Significant increase in credit risk since initial recognition",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "POCI",
+        "f": 0
+       },
+       {
+        "v": "Purchased or originated credit-impaired asset",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "EIR",
+        "f": 0
+       },
+       {
+        "v": "Effective interest rate",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PD / LGD / EAD",
+        "f": 0
+       },
+       {
+        "v": "Probability of default / loss given default / exposure at default",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PSI / CSI",
+        "f": 0
+       },
+       {
+        "v": "Population stability index / characteristic stability index",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PMA",
+        "f": 0
+       },
+       {
+        "v": "Post-model adjustment (overlay)",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "MRM",
+        "f": 0
+       },
+       {
+        "v": "Model risk management",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      ""
+     ]
+    }
+   ]
+  }
+ ]
+}

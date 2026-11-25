@@ -1,0 +1,2187 @@
+{
+ "kind": "development",
+ "depth": "brief",
+ "title": "ECL Model Development Document (MDD)",
+ "subtitle": "Standardized Developer Template for IFRS 9 / Ind AS 109 / CECL Impairment Models",
+ "howto": "Replace all blue bracketed text (e.g., [Model Name]) with model-specific details.\nPre-filled boilerplate text reflects standard global banking practice; retain and adapt as needed rather than rewriting from scratch.\nComplete every table and attach SQL/Python code links or statistical appendix outputs where indicated.\nDelete all yellow 'DEVELOPER INSTRUCTIONS' callout boxes prior to submitting to Model Validation (MRM) or External Audit.",
+ "footer": "ECL Model Development Document – Template  |  Confidential – internal use only",
+ "sections": [
+  {
+   "title": "0. Document Control & Governance Sign-Off",
+   "goal": "",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "table",
+     "cols": [
+      "Metadata Field",
+      "Model Specification"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Model ID & Name",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., ECL-RET-MTG-001 — Retail Residential Mortgage ECL Model",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Accounting & Regulatory Regime",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "IFRS 9 / Ind AS 109 (RBI ECL Directions) / US GAAP ASC 326 (CECL)",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Covered Legal Entities & Geographies",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Global Bank India Operations / Group Consolidated",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Portfolio / Asset Class Scope",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Retail Secured Mortgages, Unsecured Personal Loans, Corporate Term Loans",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model Components Covered",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "PD / LGD / EAD / Macroeconomic Satellite / SICR Staging / Full Engine",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model Tier / Risk Rating",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Tier 1 (High Materiality) / Tier 2 (Medium) / Tier 3 (Low)",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Model Owner (Business)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name, Title, Credit Risk / Finance Department",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Lead Model Developer(s)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Name(s), Quantitative Analytics / Credit Modeling Team",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Document Version & Date",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "v1.0 — DD Month YYYY",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "e.g., ECL-RET-MTG-001 — Retail Residential Mortgage ECL Model"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "Version History & Approval Sign-Off"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Version",
+      "Date",
+      "Author / Approver",
+      "Role",
+      "Summary of Changes / Sign-Off Status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "v0.1",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Developer Name",
+        "f": 1
+       },
+       {
+        "v": "Lead Developer",
+        "f": 0
+       },
+       {
+        "v": "Initial draft created for internal peer review.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "v0.9",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Lead Quant Name",
+        "f": 1
+       },
+       {
+        "v": "Modeling Lead",
+        "f": 0
+       },
+       {
+        "v": "Technical review completed; submitted to MRM.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "v1.0",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "DD/MM/YYYY",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Model Owner Name",
+        "f": 1
+       },
+       {
+        "v": "Model Owner",
+        "f": 0
+       },
+       {
+        "v": "Final approved baseline for production deployment.",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "DD/MM/YYYY",
+      "Developer Name",
+      "",
+      ""
+     ]
+    }
+   ]
+  },
+  {
+   "title": "1. Executive Summary & Model Overview",
+   "goal": "Provide senior management, MRM validators, and auditors a crisp 1-page synthesis of what the model covers, how ECL is calculated, and key limitations.\nEnsure reported Exposure at Default (EAD) balances reconcile to the General Ledger (GL) as of the development reference date.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "1.1 Purpose & Scope"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "This Model Development Document (MDD) details the theoretical framework, data architecture, empirical estimation, forward-looking macroeconomic integration, and validation results for the [Model Name] ([Model ID]). The model estimates Expected Credit Losses (ECL) in compliance with [IFRS 9 / Ind AS 109 / RBI ECL Directions / ASC 326] for financial instruments measured at Amortized Cost (AC) and Fair Value Through Other Comprehensive Income (FVOCI).",
+      "f": 1
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Portfolio Segment",
+      "Product Sub-Types",
+      "Reference Date Exposure",
+      "Account Count",
+      "Modeling Approach"
+     ],
+     "rows": [
+      [
+       {
+        "v": "",
+        "h": "Segment 1: e.g., Prime Mortgages",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Fixed & Floating Home Loans",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR / USD XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "XX,XXX",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Account-level PD/LGD/EAD",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Segment 2: e.g., Unsecured Retail",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Personal Loans, Credit Cards",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR / USD XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "XX,XXX",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Roll-rate / Survival PD + CCF",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Out-of-Scope / Exclusions",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "e.g., Staff Loans, FVTPL Assets",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR / USD XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "X,XXX",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Assessed under separate framework",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Total Covered Portfolio",
+        "f": 0
+       },
+       {
+        "v": "—",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR / USD XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "XX,XXX",
+        "f": 1
+       },
+       {
+        "v": "—",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "Segment 1: e.g., Prime Mortgages",
+      "Fixed & Floating Home Loans",
+      "INR / USD XX,XXX Cr",
+      "XX,XXX",
+      "Account-level PD/LGD/EAD"
+     ]
+    },
+    {
+     "t": "h",
+     "text": "1.2 Core Mathematical Formulation"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "For each facility i at reporting date t = 0, probability-weighted Expected Credit Loss is computed across discrete time horizons t = 1, 2, ..., T (where T = 12 months for Stage 1 and T = contractual/behavioral maturity for Stage 2 and Stage 3) across S macroeconomic scenarios:",
+      "f": 0
+     }
+    },
+    {
+     "t": "formula",
+     "c": {
+      "v": "ECL_i = Sum_{s=1..S} W_s * Sum_{t=1..T} [ Marginal_PD_{i,t,s} * LGD_{i,t,s} * EAD_{i,t,s} * DF_{i,t} ]",
+      "f": 0
+     }
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Marginal_PD_{i,t,s}:",
+       "c": {
+        "v": "Conditional probability of defaulting during interval t, given survival up to t - 1 under scenario s.",
+        "f": 0
+       }
+      },
+      {
+       "label": "LGD_{i,t,s}:",
+       "c": {
+        "v": "Forward-looking economic Loss Given Default expressed as a percentage of EAD at time t under scenario s.",
+        "f": 0
+       }
+      },
+      {
+       "label": "EAD_{i,t,s}:",
+       "c": {
+        "v": "Projected Exposure at Default at time t incorporating scheduled amortization, prepayments, and undrawn credit conversion.",
+        "f": 0
+       }
+      },
+      {
+       "label": "DF_{i,t}:",
+       "c": {
+        "v": "Discount factor computed using the instrument's Effective Interest Rate (EIR), defined as 1 / (1 + EIR)^t.",
+        "f": 0
+       }
+      },
+      {
+       "label": "W_s:",
+       "c": {
+        "v": "Probability weight assigned to macroeconomic scenario s, such that Sum(W_s) = 1.",
+        "f": 0
+       }
+      }
+     ]
+    },
+    {
+     "t": "h",
+     "text": "1.3 Key Assumptions, Limitations & Post-Model Adjustments (PMAs)"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "ID",
+      "Limitation / Structural Assumption",
+      "Potential Impact on ECL",
+      "Mitigant / PMA Requirement"
+     ],
+     "rows": [
+      [
+       {
+        "v": "LIM-01",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Historical default data covers 2016–2025, lacking a severe property downturn.",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "May underestimate LGD tail risk in severe stress.",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Anchored LGD floors to regulatory backstops / stress scalar.",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LIM-02",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Behavioral maturity cap applied to revolving facilities at 36 months.",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Sensitivity to longer tail run-off.",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Quarterly sensitivity analysis reported to Credit Committee.",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LIM-03",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Add model-specific data or methodology limitation",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Low / Medium / High",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Describe compensating control or overlay",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "e.g., Historical default data covers 2016–2025, lacking a severe property downturn.",
+      "May underestimate LGD tail risk in severe stress.",
+      "Anchored LGD floors to regulatory backstops / stress scalar."
+     ]
+    }
+   ]
+  },
+  {
+   "title": "2. Regulatory & Accounting Alignment",
+   "goal": "Map accounting rules directly to code logic so auditors can verify compliance without reading raw scripts.\nClearly document exact numerical thresholds for Default, Curing, and Significant Increase in Credit Risk (SICR).",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "2.1 Definition of Default (DoD) & Curing Rules"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "The Definition of Default is aligned with [Basel / CRR Article 178 / RBI Prudential Norms on Income Recognition and Asset Classification] and applied consistently across PD, LGD, and EAD modeling:",
+      "f": 1
+     }
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Quantitative Backstop:",
+       "c": {
+        "v": "Obligor/facility is [90]+ days past due (DPD) on any material credit obligation ([specify materiality threshold, e.g., INR 5,000 / 1% of exposure]).",
+        "f": 1
+       }
+      },
+      {
+       "label": "Unlikeliness to Pay (UTP) Triggers:",
+       "c": {
+        "v": "Distressed restructuring/forbearance with economic loss > [1%], bankruptcy/insolvency filing, fraud, charge-off, or non-accrual status.",
+        "f": 1
+       }
+      },
+      {
+       "label": "Contagion / Pull-Through Rule:",
+       "c": {
+        "v": "[Applied at Borrower / Obligor level for Corporate & SME; applied at Facility / Borrower level for Retail].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Curing & Probation Period:",
+       "c": {
+        "v": "A defaulted facility returns to performing status only after [90 / 180 / 365] consecutive days of full contractual payments and clearance of all arrears.",
+        "f": 1
+       }
+      }
+     ]
+    },
+    {
+     "t": "h",
+     "text": "2.2 Staging & Significant Increase in Credit Risk (SICR) Criteria"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "Exposures are classified into three impairment stages at each reporting date based on credit deterioration since initial recognition:",
+      "f": 0
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Stage",
+      "ECL Horizon",
+      "Quantitative Triggers",
+      "Qualitative Triggers",
+      "Backstop"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Stage 1\n(Performing)",
+        "f": 0
+       },
+       {
+        "v": "12-Month ECL",
+        "f": 0
+       },
+       {
+        "v": "No significant increase in lifetime PD since origination.",
+        "f": 0
+       },
+       {
+        "v": "None; active monitoring.",
+        "f": 0
+       },
+       {
+        "v": "0–29 DPD (unless qualitative trigger hit).",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Stage 2\n(Underperforming)",
+        "f": 0
+       },
+       {
+        "v": "Lifetime ECL",
+        "f": 0
+       },
+       {
+        "v": "Relative Trigger: Lifetime PD ratio (PD_current / PD_orig) >= [2.0x / 2.5x].\nAbsolute Trigger: Lifetime PD increase >= [XX bps].",
+        "f": 1
+       },
+       {
+        "v": "Watchlist / Early Warning Signal (EWS), restructuring without default, external bureau score drop >= [XX pts].",
+        "f": 1
+       },
+       {
+        "v": "30+ DPD rebuttable presumption.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Stage 3\n(Credit-Impaired)",
+        "f": 0
+       },
+       {
+        "v": "Lifetime ECL\n(PD = 100%)",
+        "f": 0
+       },
+       {
+        "v": "Meets Definition of Default (Section 2.1).",
+        "f": 0
+       },
+       {
+        "v": "NPA classification, legal recovery, insolvency.",
+        "f": 0
+       },
+       {
+        "v": "90+ DPD.",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "para",
+     "label": "Low Credit Risk Exemption (LCRE):",
+     "c": {
+      "v": "[State whether applied — e.g., Applied to Sovereign and Investment-Grade (BBB- or above) debt securities; not applied to retail/commercial loans].",
+      "f": 1
+     }
+    }
+   ]
+  },
+  {
+   "title": "3. Data Architecture, Quality & Segmentation",
+   "goal": "Provide a clear lineage from source tables to the final Analytical Base Table (ABT).\nInclude a waterfall table showing exact record/balance drops from raw extraction to modeling sample.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "3.1 Data Sources & Observation Window"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Dataset / Domain",
+      "Source System & Table",
+      "Historical Window",
+      "Granularity & Frequency",
+      "Key Fields Extracted"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Loan & Balance Tape",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Core Banking / EDW_LOAN_MTH",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Jan 2016 – Dec 2025",
+        "f": 1
+       },
+       {
+        "v": "Account-Month",
+        "f": 0
+       },
+       {
+        "v": "Account ID, Origination Date, Limit, Principal, EIR, DPD, Status",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Default & Recovery History",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Collections / Workout DB",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Jan 2016 – Dec 2025",
+        "f": 1
+       },
+       {
+        "v": "Event / Cash-Flow",
+        "f": 0
+       },
+       {
+        "v": "Default Date, Cure Date, Cash Recoveries, Collateral Valuation, Legal Costs",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Origination & Bureau Data",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., LOS / CIBIL / Experian",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "At Origination & Monthly",
+        "f": 1
+       },
+       {
+        "v": "Account / Borrower",
+        "f": 0
+       },
+       {
+        "v": "Origination Score, Behavioral Score, LTV, Income/DTI, Industry Code",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Macroeconomic Series",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., RBI / Bloomberg / Oxford Econ",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Q1 2005 – Q4 2025",
+        "f": 1
+       },
+       {
+        "v": "Quarterly",
+        "f": 0
+       },
+       {
+        "v": "Real GDP Growth, CPI Inflation, Unemployment, Policy Rate, HPI",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "e.g., Core Banking / EDW_LOAN_MTH",
+      "Jan 2016 – Dec 2025",
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "3.2 Data Cleaning, Exclusions & Waterfall Reconciliation"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Missing Value Imputation:",
+       "c": {
+        "v": "[e.g., Missing origination bureau scores imputed using segment median and flagged with binary indicator; accounts missing EIR imputed using product-vintage average].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Outlier Treatment:",
+       "c": {
+        "v": "[e.g., LTV capped at 150%; LGD realized values winsorized at [0%, 100%] or [0%, 120%] to retain legal cost impact].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Sample Filtering Waterfall:",
+       "c": {
+        "v": "",
+        "h": "",
+        "f": 1
+       }
+      }
+     ]
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Processing Step",
+      "Filter / Exclusion Rule",
+      "Accounts Remaining",
+      "Balance Remaining",
+      "% Excluded"
+     ],
+     "rows": [
+      [
+       {
+        "v": "1. Raw Extraction",
+        "f": 0
+       },
+       {
+        "v": "All active & closed accounts in observation window",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1,250,000",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "0.0%",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "2. Scope Filter",
+        "f": 0
+       },
+       {
+        "v": "Exclude staff loans, zero-balance closed pre-window, FVTPL",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1,180,000",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "5.6%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "3. Data Quality Filter",
+        "f": 0
+       },
+       {
+        "v": "Remove duplicate keys, corrupted maturity/origination dates",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1,165,000",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "1.3%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "4. Final Modeling ABT",
+        "f": 0
+       },
+       {
+        "v": "Clean sample split into Dev (70%) / OOT Validation (30%)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1,165,000",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XX,XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "6.8% total",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "1,250,000",
+      "INR XX,XXX Cr",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "3.3 Homogeneous Risk Segmentation"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "Exposures are segmented into homogeneous pools based on shared credit risk drivers, validated via [Decision Tree / CHAID / Information Value (IV) & WoE analysis]:",
+      "f": 1
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Segment ID",
+      "Segment Name",
+      "Segmentation Criteria",
+      "Default Rate (Avg)",
+      "Rationale"
+     ],
+     "rows": [
+      [
+       {
+        "v": "SEG-01",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Salaried Low-LTV",
+        "f": 1
+       },
+       {
+        "v": "Employment = Salaried AND Current LTV <= 60%",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "0.85%",
+        "f": 1
+       },
+       {
+        "v": "Distinctly lower default & higher recovery rate.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "SEG-02",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Salaried High-LTV",
+        "f": 1
+       },
+       {
+        "v": "Employment = Salaried AND Current LTV > 60%",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1.90%",
+        "f": 1
+       },
+       {
+        "v": "Higher sensitivity to house price shocks.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "SEG-03",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "e.g., Self-Employed",
+        "f": 1
+       },
+       {
+        "v": "Employment = Self-Employed / SME",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "3.40%",
+        "f": 1
+       },
+       {
+        "v": "Higher cash-flow volatility across economic cycles.",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "e.g., Salaried Low-LTV",
+      "",
+      "0.85%",
+      ""
+     ]
+    }
+   ]
+  },
+  {
+   "title": "4. Component Modeling Methodologies",
+   "goal": "Document the exact estimation mechanics for PD, LGD, and EAD so an independent validator can replicate results.\nIf a component uses an existing approved model (e.g., Basel IRB TTC PD), reference its Model ID and focus on the IFRS 9 / PiT / Lifetime transformation.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "4.1 Probability of Default (PD) Term Structure"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "12-Month PiT PD Estimation:",
+       "c": {
+        "v": "[Describe core model — e.g., Logistic regression / Cox proportional hazards / Markov rating transition matrix using behavioral score, DPD bucket, LTV, and vintage age].",
+        "f": 1
+       }
+      },
+      {
+       "label": "TTC-to-PiT Calibration (if applicable):",
+       "c": {
+        "v": "[Explain how Through-the-Cycle Basel ratings are adjusted to Point-in-Time using central tendency calibration and Z-score macroeconomic shifts].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Lifetime PD Extrapolation:",
+       "c": {
+        "v": "[Explain multi-year projection — e.g., Multi-period Markov transition matrix multiplication P(t) = P_1 * P_2 * ... * P_t, converging to long-run steady-state transition rates after year [3 / 5]].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Regulatory Floors:",
+       "c": {
+        "v": "[e.g., Minimum 12-month PD floor of 0.03% applied per regulatory guidelines].",
+        "f": 1
+       }
+      }
+     ]
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Variable Name",
+      "Transformation / Binning",
+      "Coefficient (Beta)",
+      "Std. Error",
+      "p-Value",
+      "VIF",
+      "Economic Intuition"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Intercept",
+        "f": 0
+       },
+       {
+        "v": "—",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "-4.125",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "0.082",
+        "f": 1
+       },
+       {
+        "v": "<0.0001",
+        "f": 0
+       },
+       {
+        "v": "—",
+        "f": 0
+       },
+       {
+        "v": "Baseline log-odds of default",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Behavioral_Score",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "WoE / Linear spline",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-0.014",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "0.001",
+        "f": 1
+       },
+       {
+        "v": "<0.0001",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1.42",
+        "f": 1
+       },
+       {
+        "v": "Higher score lowers default risk",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Max_DPD_L6M",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Categorical: 0, 1-29, 30+",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+1.380",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "0.045",
+        "f": 1
+       },
+       {
+        "v": "<0.0001",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1.35",
+        "f": 1
+       },
+       {
+        "v": "Recent delinquency strongly predicts default",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Current_LTV",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Capped at 150%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+0.021",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "0.003",
+        "f": 1
+       },
+       {
+        "v": "<0.0001",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "1.18",
+        "f": 1
+       },
+       {
+        "v": "Lower borrower equity increases default propensity",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "-4.125",
+      "0.082",
+      "",
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "4.2 Loss Given Default (LGD)"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Workout LGD Definition:",
+       "c": {
+        "v": "For resolved defaults, realized economic LGD is computed as: LGD = 1 - [Sum(Net Recoveries_t / (1 + EIR)^t) / EAD_default], inclusive of direct/indirect workout costs.",
+        "f": 1
+       }
+      },
+      {
+       "label": "Cure & Incomplete Workout Treatment:",
+       "c": {
+        "v": "[e.g., Cured accounts assigned 0% economic loss plus administrative cost; incomplete workouts censored < 24 months excluded or adjusted via survival/chain-ladder recovery curves].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Component / Structural Breakdown:",
+       "c": {
+        "v": "[e.g., Two-stage model: Probability of Cure (Logistic) x Loss Given Non-Cure (Beta / Fractional Logit / Collateral Haircut model)].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Downturn Removal & Floors:",
+       "c": {
+        "v": "[Confirm removal of Basel downturn add-ons to ensure unbiased point-in-time estimates, and note any regulatory backstop floors (e.g., 30%–70% unsecured/secured floors)].",
+        "f": 1
+       }
+      }
+     ]
+    },
+    {
+     "t": "h",
+     "text": "4.3 Exposure at Default (EAD) & Prepayment"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Amortizing Term Loans:",
+       "c": {
+        "v": "Projected contractual principal schedule adjusted for accrued interest up to default horizon (typically +[3] months unpaid interest) and Conditional Prepayment Rate (CPR) modeled via [logistic / vintage survival model].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Revolving Facilities (Credit Cards / Overdrafts):",
+       "c": {
+        "v": "Modeled using cohort-based Credit Conversion Factors (CCF): EAD_t = Balance_0 + CCF_t * (Limit_0 - Balance_0), segmented by utilization band and delinquency status.",
+        "f": 0
+       }
+      },
+      {
+       "label": "Behavioral Maturity:",
+       "c": {
+        "v": "[For open-ended revolving lines without fixed maturity, behavioral life is capped at [36 / 60] months based on empirical attrition/survival curves].",
+        "f": 1
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "5. Forward-Looking Macroeconomic Integration",
+   "goal": "Demonstrate statistical rigor and economic intuition for macroeconomic variable (MEV) selection.\nProvide clear scenario weights and prove that multi-scenario weighting captures loss non-linearity.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "5.1 Macroeconomic Variable Selection & Satellite Model"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "Candidate macroeconomic series were screened for stationarity (Augmented Dickey-Fuller test), lag structure (0 to 4 quarters), multicollinearity (VIF < 5), and sign consistency. The selected satellite specification linking MEVs to systemic credit risk Z_t is:",
+      "f": 0
+     }
+    },
+    {
+     "t": "formula",
+     "c": {
+      "v": "Z_t = alpha + beta_1 * [MEV_1_{t-k}] + beta_2 * [MEV_2_{t-k}] + epsilon_t",
+      "f": 0
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Macroeconomic Variable",
+      "Transformation & Lag",
+      "Coefficient",
+      "t-Stat / p-Value",
+      "ADF Stationarity",
+      "Economic Rationale"
+     ],
+     "rows": [
+      [
+       {
+        "v": "",
+        "h": "Real GDP Growth (%)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "YoY %, Lag 1Q",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-0.185",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-4.12 / 0.0002",
+        "f": 1
+       },
+       {
+        "v": "Stationary (p<0.01)",
+        "f": 0
+       },
+       {
+        "v": "Economic expansion improves borrower repayment capacity.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "Unemployment Rate (%)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "QoQ Diff, Lag 2Q",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+0.310",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "3.65 / 0.0008",
+        "f": 1
+       },
+       {
+        "v": "Stationary (p<0.01)",
+        "f": 0
+       },
+       {
+        "v": "Job losses directly trigger retail mortgage & card defaults.",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "",
+        "h": "House Price Index (HPI)",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "YoY %, Lag 1Q",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-0.140",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-3.10 / 0.0031",
+        "f": 1
+       },
+       {
+        "v": "Stationary (p<0.05)",
+        "f": 0
+       },
+       {
+        "v": "Falling collateral values increase LGD and strategic defaults.",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "Real GDP Growth (%)",
+      "YoY %, Lag 1Q",
+      "-0.185",
+      "-4.12 / 0.0002",
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "5.2 Scenario Design & Probability Weighting"
+    },
+    {
+     "t": "para",
+     "label": "",
+     "c": {
+      "v": "Macroeconomic forecasts are sourced from [Internal Economic Research / Oxford Economics / Moody's Analytics] over a [3 / 5]-year explicit forecast window, reverting linearly to long-run equilibrium thereafter. Scenario weights are approved quarterly by the [ALCO / ECL Governance Committee]:",
+      "f": 1
+     }
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Scenario",
+      "Weight",
+      "Narrative Summary",
+      "Year 1 GDP",
+      "Year 1 Unemp.",
+      "Resulting Portfolio ECL"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Upside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "15%",
+        "f": 1
+       },
+       {
+        "v": "Strong domestic demand, benign inflation, rate cuts.",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "+7.5%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "4.2%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Baseline",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "55%",
+        "f": 1
+       },
+       {
+        "v": "Consensus central macroeconomic trajectory.",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "+6.5%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "4.8%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Downside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "20%",
+        "f": 1
+       },
+       {
+        "v": "Stagflationary pressure, tighter monetary policy.",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "+4.2%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "6.1%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Severe Downside",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "10%",
+        "f": 1
+       },
+       {
+        "v": "Global recession, sharp asset price correction.",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "+1.5%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "7.8%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Probability-Weighted",
+        "f": 0
+       },
+       {
+        "v": "100%",
+        "f": 0
+       },
+       {
+        "v": "Non-linear weighted ECL allowance",
+        "f": 0
+       },
+       {
+        "v": "—",
+        "f": 0
+       },
+       {
+        "v": "—",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "15%",
+      "",
+      "+7.5%",
+      "4.2%",
+      "INR XXX Cr"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "6. Model Performance, Backtesting & Sensitivity",
+   "goal": "Report standardized discriminatory power and calibration metrics across Development (In-Sample) and Out-of-Time (OOT) samples.\nInclude sensitivity tables quantifying ECL impact under single-factor shocks.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "6.1 Statistical Performance Metrics"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Component / Metric",
+      "Development Sample",
+      "Out-of-Time (OOT)",
+      "Internal Benchmark / Traffic Light",
+      "Status"
+     ],
+     "rows": [
+      [
+       {
+        "v": "PD — Gini / AUROC",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "0.68 / 0.84",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "0.65 / 0.825",
+        "f": 1
+       },
+       {
+        "v": "Green: Gini >= 0.45 | Amber: 0.35–0.45",
+        "f": 0
+       },
+       {
+        "v": "Green (Pass)",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PD — KS Statistic",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "48.2%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "45.6%",
+        "f": 1
+       },
+       {
+        "v": "Green: KS >= 35%",
+        "f": 0
+       },
+       {
+        "v": "Green (Pass)",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PD — Calibration (Jeffreys / Binomial)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "Pred: 1.45% vs Obs: 1.42%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "Pred: 1.52% vs Obs: 1.58%",
+        "f": 1
+       },
+       {
+        "v": "Within 95% confidence interval",
+        "f": 0
+       },
+       {
+        "v": "Green (Pass)",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "LGD — R-Squared / RMSE",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "R2: 0.34 | RMSE: 14.2%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "R2: 0.31 | RMSE: 15.1%",
+        "f": 1
+       },
+       {
+        "v": "Outperforms historical average benchmark",
+        "f": 0
+       },
+       {
+        "v": "Green (Pass)",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "EAD — Mean Absolute Error (MAE)",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "6.4%",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "7.1%",
+        "f": 1
+       },
+       {
+        "v": "Green: MAE <= 10%",
+        "f": 0
+       },
+       {
+        "v": "Green (Pass)",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "0.68 / 0.84",
+      "0.65 / 0.825",
+      "",
+      ""
+     ]
+    },
+    {
+     "t": "h",
+     "text": "6.2 Sensitivity & Stress Analysis"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Sensitivity Test",
+      "Parameter Shock Applied",
+      "Baseline Weighted ECL",
+      "Shocked ECL",
+      "% Change in ECL"
+     ],
+     "rows": [
+      [
+       {
+        "v": "100% Severe Downside",
+        "f": 0
+       },
+       {
+        "v": "Set Severe Downside weight = 100%",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+XX.X%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "100% Upside",
+        "f": 0
+       },
+       {
+        "v": "Set Upside weight = 100%",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "-XX.X%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "SICR Threshold Tightening",
+        "f": 0
+       },
+       {
+        "v": "Lower relative PD trigger from 2.0x to 1.5x",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+XX.X%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "LGD Floor Shock",
+        "f": 0
+       },
+       {
+        "v": "Increase portfolio LGD by +500 bps",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+XX.X%",
+        "f": 1
+       }
+      ],
+      [
+       {
+        "v": "Macro Shock (+100 bps Unemp.)",
+        "f": 0
+       },
+       {
+        "v": "Parallel +1% shock to unemployment path",
+        "f": 0
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "INR XXX Cr",
+        "f": 1
+       },
+       {
+        "v": "",
+        "h": "+XX.X%",
+        "f": 1
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "INR XXX Cr",
+      "INR XXX Cr",
+      "+XX.X%"
+     ]
+    }
+   ]
+  },
+  {
+   "title": "7. Production Implementation & Ongoing Monitoring",
+   "goal": "Ensure zero discrepancy between development prototypes (Python/R/SAS) and the production ECL engine.\nDefine exact quarterly monitoring thresholds (PSI, calibration drift) that trigger model recalibration.",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "h",
+     "text": "7.1 Production Architecture & Code Controls"
+    },
+    {
+     "t": "list",
+     "items": [
+      {
+       "label": "Execution Platform:",
+       "c": {
+        "v": "[e.g., Python 3.11 / PySpark on Enterprise Risk Cloud; scheduled monthly on T+3 business days].",
+        "f": 1
+       }
+      },
+      {
+       "label": "Code Repository & Tag:",
+       "c": {
+        "v": "`[https://git.internal.bank/credit-risk/ecl-model-repo]` (Release Tag: `[v1.0.0-prod]`).",
+        "f": 1
+       }
+      },
+      {
+       "label": "UAT & Parallel Run Reconciliation:",
+       "c": {
+        "v": "Production engine output reconciled against independent developer prototype across 100% of active accounts; maximum variance = [0.00% / < $1], well within the [0.01%] tolerance.",
+        "f": 1
+       }
+      }
+     ]
+    },
+    {
+     "t": "h",
+     "text": "7.2 Ongoing Performance Monitoring Plan"
+    },
+    {
+     "t": "table",
+     "cols": [
+      "Monitoring Metric",
+      "Frequency",
+      "Green (Normal)",
+      "Amber (Investigate)",
+      "Red (Recalibrate / Escalate)"
+     ],
+     "rows": [
+      [
+       {
+        "v": "Population Stability Index (PSI)",
+        "f": 0
+       },
+       {
+        "v": "Quarterly",
+        "f": 0
+       },
+       {
+        "v": "PSI < 0.10",
+        "f": 0
+       },
+       {
+        "v": "0.10 <= PSI < 0.25",
+        "f": 0
+       },
+       {
+        "v": "PSI >= 0.25",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PD Discriminatory Power (Gini)",
+        "f": 0
+       },
+       {
+        "v": "Quarterly",
+        "f": 0
+       },
+       {
+        "v": "Drop < 3% vs Dev",
+        "f": 0
+       },
+       {
+        "v": "Drop 3%–5% vs Dev",
+        "f": 0
+       },
+       {
+        "v": "Drop > 5% vs Dev",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "PD Calibration Drift (Pred vs Obs)",
+        "f": 0
+       },
+       {
+        "v": "Semi-Annual",
+        "f": 0
+       },
+       {
+        "v": "Within +/- 10% relative",
+        "f": 0
+       },
+       {
+        "v": "+/- 10% to 20% relative",
+        "f": 0
+       },
+       {
+        "v": "> 20% relative drift",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "LGD Realized vs Predicted Error",
+        "f": 0
+       },
+       {
+        "v": "Annual",
+        "f": 0
+       },
+       {
+        "v": "Abs Error < 3% pts",
+        "f": 0
+       },
+       {
+        "v": "3%–5% pts",
+        "f": 0
+       },
+       {
+        "v": "> 5% pts",
+        "f": 0
+       }
+      ],
+      [
+       {
+        "v": "Stage 2 Migration Volatility",
+        "f": 0
+       },
+       {
+        "v": "Quarterly",
+        "f": 0
+       },
+       {
+        "v": "QoQ change < 15%",
+        "f": 0
+       },
+       {
+        "v": "15%–25%",
+        "f": 0
+       },
+       {
+        "v": "> 25% unexplained shift",
+        "f": 0
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Appendix A: Developer Submission Checklist",
+   "goal": "",
+   "rep": false,
+   "blocks": [
+    {
+     "t": "table",
+     "cols": [
+      "Item",
+      "Required Artifact / Verification",
+      "Developer Check"
+     ],
+     "rows": [
+      [
+       {
+        "v": "1",
+        "f": 0
+       },
+       {
+        "v": "All blue `[placeholders]` populated and all yellow developer instruction boxes deleted.",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": "Completed"
+       }
+      ],
+      [
+       {
+        "v": "2",
+        "f": 0
+       },
+       {
+        "v": "GL reconciliation signed off by Finance Controller for development reference date.",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": "Completed"
+       }
+      ],
+      [
+       {
+        "v": "3",
+        "f": 0
+       },
+       {
+        "v": "Model code pushed to version-controlled repository with unit tests and README.",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": "Completed"
+       }
+      ],
+      [
+       {
+        "v": "4",
+        "f": 0
+       },
+       {
+        "v": "Independent replication package (datasets, scripts, seed values) archived for MRM.",
+        "f": 0
+       },
+       {
+        "k": "chk",
+        "v": "",
+        "f": 1,
+        "lbl": "Completed"
+       }
+      ]
+     ],
+     "proto": [
+      "",
+      "",
+      ""
+     ]
+    }
+   ]
+  }
+ ]
+}
