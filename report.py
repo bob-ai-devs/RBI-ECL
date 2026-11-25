@@ -24,7 +24,12 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 _editor = components.declare_component("ecl_doc_editor", path=str(ROOT / "components" / "doc_editor"))
 
-LABEL = {f"{k}|{d}": f"{M.KINDS[k].split()[0]} · {M.DEPTHS[d]}" for k in M.KINDS for d in M.DEPTHS}
+# Validation Document is switched off for now. To bring it back, uncomment "validation" below.
+ENABLED_KINDS = [
+    "development",
+    # "validation",
+]
+LABEL = {f"{k}|{d}": f"{M.KINDS[k]} · {M.DEPTHS[d]}" for k in ENABLED_KINDS for d in M.DEPTHS}
 
 
 # ------------------------------------------------------------------ state
@@ -182,7 +187,7 @@ def sidebar():
 def tiles_html(container):
     ss = st.session_state
     with container:
-        cols = st.columns(4)
+        cols = st.columns(len(LABEL))
         for col, key in zip(cols, LABEL):
             rep = ss.reports.get(key)
             if rep:
@@ -198,12 +203,12 @@ def creation_panel():
     ss = st.session_state
     st.markdown('<h3 class="sub">Create a report</h3>', unsafe_allow_html=True)
     with st.container(border=True):
-        depth_label = st.radio("Report depth", ["Brief", "Advanced"], horizontal=True,
-                               help="Brief = condensed strict template. Advanced = full template aligned to the RBI Directions paragraph by paragraph.")
-        depth = depth_label.lower()
+        depth_label = st.radio("Report depth", ["Standard", "Advanced"], horizontal=True,
+                               help="Standard = condensed strict template. Advanced = full template aligned to the RBI Directions paragraph by paragraph.")
+        depth = "brief" if depth_label == "Standard" else "advanced"   # "brief" is the internal template key
         st.caption("One report is generated per click (lower API load). Every generated report is stored in the session.")
-        c1, c2 = st.columns(2)
-        for col, kind in ((c1, "development"), (c2, "validation")):
+        cols = st.columns(len(ENABLED_KINDS))
+        for col, kind in zip(cols, ENABLED_KINDS):
             key = f"{kind}|{depth}"
             exists = key in ss.reports
             label = f"{'↻ Re-create' if exists else '＋ Create'} {M.KINDS[kind]} · {depth_label}"
@@ -297,7 +302,7 @@ def export_panel(key, rep, kind, depth):
 init()
 sidebar()
 st.markdown(hero("ECL Documentation Studio",
-                 "Strict Development and Validation documents for the RBI (Commercial Banks – Asset Classification, Provisioning and Income Recognition) "
+                 "Strict Model Development documents (Standard and Advanced) for the RBI (Commercial Banks – Asset Classification, Provisioning and Income Recognition) "
                  "Directions, 2026. Upload model code, let Gemini draft, edit every row in the browser, export to PDF, Word, Excel and HTML."),
             unsafe_allow_html=True)
 tile_box = st.container()
